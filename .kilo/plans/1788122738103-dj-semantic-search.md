@@ -7,52 +7,44 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 - **Desktop shell**: PyWebView (native window, OS drag-and-drop)
 - **Backend**: FastAPI on localhost (same process)
 - **Packaging**: PyInstaller for Win/Mac/Linux
-- **Vector DB**: Qdrant (bundled portable binary, no Docker)
-- **Metadata DB**: SQLite (local file, stores track metadata, lyrics, feedback)
+- **Vector DB**: ChromaDB (pure Python, local file-based)
+- **Metadata DB**: SQLite (local file, stores track metadata, lyrics, feedback, and complex filtering)
 - **Audio embeddings**: LAION-CLAP (local default)
 - **Lyrics**: WhisperX (optional, local)
 - **Metadata**: File tags + optional AudD API for untagged files + import from DJ software (Serato, Virtual DJ, Rekordbox)
 
 ## Data Model
-Each track in Qdrant:
-```json
-{
-  "id": "sha256_file_hash",
-  "vector": [...],  // CLAP audio embedding
-  "payload": {
-    "title": "...",
-    "artist": "...",
-    "album": "...",
-    "genre": ["..."],
-    "bpm": 125,
-    "key_camelot": "8A",
-    "key_open": "G minor",
-    "isrc": "...",
-    "duration_seconds": 132,
-    "file_path": "/path/to/track.mp3",
-    "file_hash": "sha256...",
-    "sample_rate": 44100,
-    "bitrate": 320,
-    "quality_flag": "verified",  // "verified" | "possibly_upsampled" | "low_quality"
-    "quality_notes": "...",
-    "lyrics_snippet": "...",
-    "lyric_vector": [...],  // optional, stored in Qdrant
-    "tags": ["warmup", "peak", "vinyl-only"],
-    "rating": 4,
-    "color_label": "green",
-    "comments": "User notes...",
-    "date_added": "2026-08-30"
-  }
-}
-```
-- `lyrics_full` and `lyrics_timestamps` are stored in SQLite, not Qdrant payload (payload size limits)
-- Track ID = SHA-256 of full file contents. Stable across moves, changes only when file content changes.
-- Quality checker handles lossy (MP3, M4A) and lossless (FLAC, WAV, AIFF) differently:
-  - Lossy: frequency cutoff, quantization noise, entropy analysis
-  - Lossless: clipping detection, spectral flatness, dynamic range, noise floor
 
-## What Qdrant Is
-Qdrant is the vector database that powers the semantic search. It stores the numerical "fingerprints" (embeddings) of each track and lets you find similar tracks by meaning, not just keywords. When you search "dark brooding charli xcx", Qdrant finds tracks whose audio vectors are mathematically close to the text vector, optionally filtered by metadata. It runs as a bundled binary inside the app—no Docker, no cloud.
+### ChromaDB (Vector Store)
+ChromaDB stores vectors with lightweight metadata for similarity search:
+- `id`: SHA-256 file hash
+- `vector`: CLAP audio embedding
+- `metadata`: title, artist, album, genre, bpm, key_camelot, key_open, duration_seconds, file_path, quality_flag, tags, rating, color_label, date_added
+- `document`: lyrics_snippet (for keyword search)
+- ChromaDB handles persistence automatically to local file
+
+### SQLite (Metadata Store)
+SQLite stores richer metadata that doesn't fit in ChromaDB's metadata fields:
+- `lyrics_full`: full lyric text
+- `lyrics_timestamps`: word-level timestamps from WhisperX
+- `lyric_vector`: optional text embedding for semantic lyric search
+- `file_hash`: SHA-256 of full file contents
+- `sample_rate`, `bitrate`, `isrc`: additional audio properties
+- `comments`: user notes
+- `quality_notes`: detailed quality analysis text
+- `feedback`: explicit ratings and implicit signals
+- `import_state`: track metadata from DJ software imports
+
+### Track ID
+- Track ID = SHA-256 of full file contents. Stable across moves/renames, changes only when file content changes.
+
+### Quality Checker
+Handles lossy and lossless formats differently:
+- **Lossy (MP3, M4A)**: frequency cutoff, quantization noise, entropy analysis, artifact detection
+- **Lossless (FLAC, WAV, AIFF)**: clipping detection, spectral flatness, dynamic range, noise floor, stereo correlation
+
+## What ChromaDB Is
+ChromaDB is the vector database that powers the semantic search. It stores the numerical "fingerprints" (embeddings) of each track and lets you find similar tracks by meaning, not just keywords. When you search "dark brooding charli xcx", ChromaDB finds tracks whose audio vectors are mathematically close to the text vector. Metadata filtering (artist, BPM, key) is handled by SQLite for maximum flexibility. ChromaDB is pure Python with automatic file-based persistence—no binary to bundle.
 
 ## Search UX
 - **Primary search bar**: Free-text for vibe/semantic queries ("dark brooding", "sunset beach vibes")
@@ -84,8 +76,8 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 ## Implementation Phases
 
 ### Phase 1: Project Setup & Ingestion
-1. `pyproject.toml` with deps: fastapi, qdrant-client, laion-clap, librosa, pywebview, pyinstaller
-   2. Qdrant setup (bundled portable binary)
+1. `pyproject.toml` with deps: fastapi, chromadb, laion-clap, librosa, pywebview, pyinstaller
+   2. ChromaDB setup (file-based persistence)
 3. SQLite setup (local file for track metadata, lyrics, feedback)
 4. Audio file scanner (recursive folder scan, format validation)
 5. Metadata extractor (file tags via mutagen)
@@ -95,7 +87,7 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 9. Optional AudD integration for missing metadata
 
 ### Phase 2: Search Backend
-1. Qdrant hybrid search client (pre-filter + vector similarity)
+1. ChromaDB search client (vector similarity)
 2. Rule-based query parser:
    - Match known artists from library
    - Parse BPM ranges ("around 120", "120-130")
@@ -189,9 +181,9 @@ When a model is added, the app runs background pre-computation but does NOT clai
 
 ### Per-Model Collections
 To support model comparison and avoid full re-ingestion on every switch:
-- Each model gets its own Qdrant collection (e.g., `tracks_clap_v1`, `tracks_mert_v1`)
+- Each model gets its own ChromaDB collection (e.g., `tracks_clap_v1`, `tracks_mert_v1`)
 - SQLite stores model-independent data (track metadata, lyrics, feedback)
-- When user switches models, app simply queries a different Qdrant collection
+- When user switches models, app simply queries a different ChromaDB collection
 - When user compares models side-by-side, both collections are queried in parallel
 - If user deletes a model, its collection is dropped
 
@@ -283,7 +275,7 @@ For lyric searches specifically, the router decides keyword vs semantic based on
 - When user enables lyric search:
   - Route based on query characteristics above
   - Keyword search: SQLite FTS5 or simple text search over `lyrics_full`
-  - Semantic search: Qdrant cosine similarity on `lyric_vector`
+   - Semantic search: ChromaDB cosine similarity on `lyric_vector`
 - UI toggle: "Search lyrics" checkbox + mode selector (Both / Keyword / Semantic)
 - **Default mode: Both**. Runs keyword and semantic in parallel, merges results.
 - When keyword match is used: highlight matched words/phrases in `lyrics_snippet` with `<mark>` tags for frontend display
@@ -339,9 +331,10 @@ Store in payload:
 - **Metadata**: Offline-first; AudD only for untagged files during ingestion
 - **Open source**: Yes, for trust and community
 - **Embedding**: Local CLAP default only for v1
-- **Model switching**: Full re-embedding with explicit user confirmation
+- **Model switching**: Switch ChromaDB collection; no re-ingestion needed
 - **Cloud backend**: Not in v1. Stretch goal: managed cloud worker with per-user API keys
 - **DJ software import**: Serato, Virtual DJ, Rekordbox metadata import supported
+- **Vector DB**: ChromaDB (pure Python, file-based persistence)
 
 ## Assumptions & Gaps to Address
 
@@ -355,10 +348,10 @@ Store in payload:
 - **Gap**: How is the server started/stopped? Thread? Subprocess?
 - **Decision**: FastAPI runs in a background thread within the PyWebView process; app startup starts the server, shutdown stops it cleanly
 
-### Qdrant Packaging
-- **Assumption**: Qdrant runs locally without external dependencies
-- **Gap**: Qdrant requires a Rust binary; not a pure Python library
-- **Decision**: Bundle Qdrant's portable binary with the PyInstaller app (~20MB compressed). Ship platform-specific binaries for Win/Mac/Linux. No Docker required. Binary lives in app's data directory and is launched/stopped by the app.
+### ChromaDB Persistence
+- **Assumption**: ChromaDB's file-based persistence works reliably across app restarts
+- **Gap**: ChromaDB stores data in a local directory; need to ensure it's in the app data directory, not a temp folder
+- **Decision**: Use platformdirs for ChromaDB data directory. ChromaDB handles persistence automatically; no separate binary or process management needed.
 
 ### Audio Format Support
 - **Assumption**: All audio files are valid and readable
@@ -368,7 +361,7 @@ Store in payload:
 ### Library Path Handling
 - **Assumption**: File paths are stable
 - **Gap**: User moves music folder, uses external drive, or has different mount points
-- **Decision**: Store absolute paths in Qdrant payload. Provide "Relocate Library" feature in settings to bulk-update paths. Detect missing files on startup.
+- **Decision**: Store absolute paths in SQLite metadata. Provide "Relocate Library" feature in settings to bulk-update paths. Detect missing files on startup.
 
 ### PyInstaller Data Files
 - **Assumption**: Static assets (HTML/JS frontend) are available
@@ -399,10 +392,10 @@ Store in payload:
 - **Track ID**: SHA-256 of full file contents. Stable across moves and renames, changes only when file content changes.
 - **Path + mtime**: Used for change detection, not ID generation. If file hash matches but path changed, update path in place.
 
-### Cross-Platform Paths in Qdrant
+### Cross-Platform Paths
 - **Assumption**: Paths work across OS
-- **Gap**: Windows paths (C:\Users\...) won't work on macOS/Linux and vice versa
-- **Decision**: Store absolute paths. Qdrant collection is not shared across OS. If user moves library, use "Relocate Library" feature.
+- **Gap**: Windows paths (`C:\Users\...`) won't work on macOS/Linux and vice versa
+- **Decision**: Store absolute paths in SQLite. ChromaDB collections are not shared across OS. If user moves library, use "Relocate Library" feature.
 
 ## Software Architecture
 
@@ -411,8 +404,8 @@ Store in payload:
 ┌─────────────────────────────────────────────────────────────────┐
 │  Desktop App (User's Machine)                                  │
 │  ┌──────────────┐  ┌────────────────────┐  ┌───────────────┐  │
-│  │ PyWebView    │  │ FastAPI (thread)   │  │ Qdrant       │  │
-│  │ (UI thread)  │  │ localhost:8000     │  │ (child proc) │  │
+│  │ PyWebView    │  │ FastAPI (thread)   │  │ ChromaDB      │  │
+│  │ (UI thread)  │  │ localhost:8000     │  │ (pure Python) │  │
 │  └──────────────┘  └─────────┬──────────┘  └───────────────┘  │
 │                              │                                 │
 │                    ┌─────────┴──────────┐                     │
@@ -433,8 +426,8 @@ Store in payload:
 ```
 - **Main thread**: PyWebView UI
 - **Background thread**: FastAPI server (localhost only)
-- **Child process**: Qdrant binary (managed by app, auto-restart on crash)
-- **Local DB**: SQLite file for track metadata, lyrics, timestamps, feedback
+- **Vector DB**: ChromaDB (pure Python, file-based persistence, no binary)
+- **Metadata DB**: SQLite file for track metadata, lyrics, timestamps, feedback, and complex filtering
 - **Optional process**: WhisperX (GPU)
 - **No remote worker in v1**: Out of scope, see stretch goals
 
@@ -447,12 +440,13 @@ src/
 ├── models.py          # Pydantic models for API and payloads
 ├── db/
 │   ├── __init__.py
-│   ├── qdrant.py      # Qdrant client, collection management
-│   └── schema.py      # Payload definitions, indexes
+│   ├── chroma.py      # ChromaDB client, collection management
+│   ├── sqlite.py      # SQLite schema, metadata, lyrics, feedback
+│   └── schema.py      # Data models and validation
 ├── ingestion/
 │   ├── __init__.py
 │   ├── scanner.py     # Recursive folder scan, format validation
-│   ├── metadata.py    # mutagen tags, AudD API client
+│   ├── metadata.py    # mutagen tags, AudD API client, DJ software import
 │   ├── embeddings.py  # Local CLAP encoder (default)
 │   ├── quality.py     # Audio quality checker (upsampling detection)
 │   └── pipeline.py    # Orchestrator: scan → metadata → embed → store
@@ -460,7 +454,7 @@ src/
 │   ├── __init__.py
 │   ├── parser.py      # Rule-based query parser
 │   ├── lyrics.py      # Lyric search (keyword + semantic)
-│   └── hybrid.py      # Qdrant search with metadata filters
+│   └── hybrid.py      # ChromaDB search + SQLite metadata filtering
 ├── export/
 │   ├── __init__.py
 │   ├── rekordbox.py   # XML export
@@ -477,13 +471,13 @@ src/
 
 ### State Management
 - **Settings**: `settings.json` in platformdirs data directory
-- **Vector data**: Qdrant collection(s) with payloads (one collection per model)
+- **Vector data**: ChromaDB collections (one per model, file-based persistence)
 - **Metadata DB**: SQLite file for track metadata, lyrics, timestamps, feedback, and import state
 - **Ingestion state**: Tracked via file hash in SQLite; resume on restart
 - **Model cache**: Hugging Face cache in platformdirs models directory
 
 ### Error Handling
-- **Qdrant unavailable/crashed**: Retry with backoff; if persistent, restart Qdrant binary automatically. If restart fails, show error in UI and disable search.
+- **ChromaDB unavailable**: Retry with backoff; if persistent, show error in UI and disable search
 - **Corrupt audio file**: Log error, skip file, show in UI skipped-files list
 - **Ingestion interrupted**: Partial results preserved; resume on next scan via SQLite state
 - **File modified**: On re-scan, detect changed file hash. Update existing track record rather than creating duplicate.
@@ -609,7 +603,7 @@ In Settings, enable "Test Mode" for detailed manual evaluation:
 ### Model Comparison Workflow
 1. User enables "Compare Mode" in Settings
 2. Selects two models: current (A) and candidate (B)
-3. For each search, results from both models are queried from their respective Qdrant collections and shown side-by-side
+3. For each search, results from both models are queried from their respective ChromaDB collections and shown side-by-side
 4. User rates each model's results independently (1-10)
 5. App computes comparative metrics: "Model B wins on 8/12 queries, avg +1.2 rating"
 6. User can switch to winning model with one click (no re-ingestion needed)
@@ -620,7 +614,7 @@ Store tuned defaults per model in registry:
 {
   "model_id": "laion/larger_clap",
   "dimensions": 512,
-  "qdrant_collection": "tracks_clap_v1",
+  "chroma_collection": "tracks_clap_v1",
   "default_similarity_threshold": 0.7,
   "default_result_limit": 20,
   "default_filter_strength": 0.8,
