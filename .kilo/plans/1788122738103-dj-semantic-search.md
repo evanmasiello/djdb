@@ -79,31 +79,72 @@ Each track in Qdrant:
 4. PyInstaller packaging
 5. README and setup docs
 
-## Remote Embedding API (Optional)
-For users with large libraries or no GPU, provide an optional remote embedding service:
+## Remote Embedding Worker (Optional)
+For users with large libraries or no GPU, provide an optional remote embedding service. Same codebase, separate process, configured entirely through the app settings UI.
+
+### Worker Mode
+- Same FastAPI repo exposes an additional `/v1/embed-audio` endpoint when run in "worker" mode
+- User launches worker on a GPU machine via simple script (`python -m app worker` or Docker)
+- Desktop app Settings UI has a "Remote Embedding" section:
+  - Worker URL input (e.g., `http://192.168.1.50:8000`)
+  - API key input (optional, for auth)
+  - Test connection button
+  - Enable/disable toggle
 
 ### API Contract
 - **Endpoint**: `POST /v1/embed-audio`
 - **Input**: Multipart audio file or URL
 - **Output**: CLAP vector (512-dim float array) + duration
 - **Batching**: Support multiple files per request for throughput
-- **Auth**: API key or bearer token (optional for self-hosted)
-
-### Deployment Options
-1. **Self-hosted**: User runs the same FastAPI app with a GPU on their network
-2. **Managed cloud**: Hosted service (future monetization path for open-source project)
+- **Auth**: Bearer token or API key (optional for self-hosted)
 
 ### Client Integration
-- Desktop app detects GPU availability
-- If no GPU / large library: prompt user to configure remote API URL + key
-- Fallback to local CPU if remote unavailable
+- Desktop app checks settings for remote worker URL
+- If configured: sends embedding jobs to worker, falls back to local if unreachable
+- If not configured: uses local CLAP encoder (CPU or GPU)
 - Cache results locally; never re-upload same file
+- Ingestion progress UI shows whether embeddings are local or remote
 
 ### Privacy Considerations
 - Audio files contain copyrighted material
-- Remote API should be opt-in with clear disclosure
-- Self-hosted option keeps data on user's network
+- Remote worker is opt-in via Settings UI with clear disclosure
+- Self-hosted worker keeps data on user's network
 - No telemetry or logging of audio content by default
+
+## Model Registry (Pluggable Embeddings)
+Allow users to switch audio-text embedding models via Hugging Face Hub or local paths, without rebuilding the app.
+
+### Supported Model Formats
+- Hugging Face Hub model IDs (e.g., `laion/larger_clap`, `microsoft/BEATs`)
+- Local model paths (for custom fine-tunes)
+- Curated preset list in Settings UI: LAION-CLAP, MERT, BEATs, etc.
+
+### Model Requirements
+For a model to be pluggable, it must:
+- Accept raw audio waveform + text as inputs
+- Output a fixed-dimension embedding vector
+- Be loadable via `transformers` or `clap` libraries
+- Have consistent input/output contracts
+
+### Settings UI: "Embedding Model" Section
+- Dropdown of preset models with dimensions and description
+- "Add custom model" button (HF Hub ID or local path)
+- Model info display: name, dimensions, size, last validated
+- Test button: embed a sample audio snippet to verify compatibility
+- Active model stored in local settings
+
+### Critical: Model Switching Behavior
+When a user switches models, existing vectors in Qdrant are incompatible because:
+- Different models produce different vector dimensions
+- Even same dimensions have different geometric spaces
+- Old vectors cannot be compared to new query vectors
+
+**Options for handling model switches:**
+A) **Require full re-embedding**: Clear collection, re-process entire library with new model. User is warned and must confirm.
+B) **Versioned collections**: Create new Qdrant collection per model version (e.g., `tracks_clap_v1`, `tracks_mert_v1`). Switch is instant but uses more disk.
+C) **Lazy migration**: Re-embed tracks on-demand during search if vector dimension mismatches. Slow first search, then fast.
+
+**Recommendation pending - see question below.**
 
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
@@ -111,8 +152,8 @@ For users with large libraries or no GPU, provide an optional remote embedding s
 - **Export formats**: Rekordbox XML, Serato SB, M3U
 - **Metadata**: Offline-first; AudD only for untagged files during ingestion
 - **Open source**: Yes, for trust and community
-- **Embedding**: Local CLAP default; optional remote API for large libraries / no GPU
-- **Remote API**: Self-hosted or managed; opt-in with privacy disclosure
+- **Embedding**: Local CLAP default; optional remote worker for large libraries / no GPU
+- **Remote worker**: Same repo, configured via Settings UI (no CLI flags)
 
 ## Open Questions
 1. **Test library available?** Needed for early validation.
