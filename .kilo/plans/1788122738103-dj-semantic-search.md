@@ -66,11 +66,15 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 ## API Keys & External Services
 - **AudD**: API key stored in Settings UI. Only used during ingestion for untagged files.
 - **Remote Worker**: URL + optional API key stored in Settings UI.
+- **LLM API** (optional): API key for remote query routing (OpenAI, Anthropic, etc.). Stored in Settings UI. Only used if Smart Mode is enabled and remote API is selected. Opt-in with privacy disclosure.
 
 ## WhisperX & Model Selection
 - **First enable**: Prompt user to download WhisperX model. Show size and estimated time.
 - **Model choice**: Offer smaller/faster models (e.g., `tiny`, `base`) vs larger/more accurate (`medium`, `large`). User picks based on GPU/RAM.
-- **Local LLM for query parsing**: Offer small downloadable models (Phi-3 Mini 3.8B, Llama 3.2 1B/3B) as an optional alternative to rule-based parsing. Default to rule-based for offline reliability.
+- **Smart Mode for query parsing**: Two options:
+  - **Local LLM**: Small downloadable models (Phi-3 Mini 3.8B, Llama 3.2 1B/3B). Requires model download (~2-8GB).
+  - **Remote LLM API**: External API (OpenAI, Anthropic, etc.). Requires API key in Settings. Query text sent externally; opt-in with disclosure.
+  - Default to rule-based for offline reliability.
 
 ## Implementation Phases
 
@@ -189,12 +193,11 @@ When a user switches models, existing vectors in Qdrant are incompatible because
 
 ### Smart Mode (Optional)
 - Single text field for natural language queries
-- Small downloadable LLM runs locally for structured extraction:
-  - Phi-3 Mini 3.8B (recommended default)
-  - Llama 3.2 1B/3B (lighter, faster on CPU)
-- Extracts: artist, bpm_range, key_camelot, genre, vibe_query
-- Requires settings toggle + model download (~2-8GB)
-- Falls back to rule-based if model unavailable
+- Two implementation options:
+  - **Local LLM**: Small downloadable model (Phi-3 Mini 3.8B, Llama 3.2 1B/3B). Requires settings toggle + model download (~2-8GB). Zero latency, zero cost, fully offline.
+  - **Remote LLM API**: Call external API (OpenAI, Anthropic, etc.) for query decomposition. Requires settings toggle + API key. Lower local resource usage, requires internet. Privacy consideration: query text sent to external service.
+- Extracts: artist, bpm_range, key_camelot, genre, vibe_query, lyric_mode
+- Falls back to rule-based if model/API unavailable or disabled
 
 ### Query Routing & Decomposition
 
@@ -214,11 +217,12 @@ When a user switches models, existing vectors in Qdrant are incompatible because
   5. If lyrics enabled and query looks conceptual → also run lyric semantic search
 - Always search audio vectors. Lyrics are additive.
 
-### Optional: Smart Mode (Local LLM)
-- Small downloadable model (Phi-3 Mini 3.8B, Llama 3.2 1B/3B)
+### Optional: Smart Mode
+- Two implementation options:
+  - **Local LLM**: Small downloadable model (Phi-3 Mini 3.8B, Llama 3.2 1B/3B). Requires settings toggle + model download.
+  - **Remote LLM API**: External API (OpenAI, Anthropic, etc.). Requires settings toggle + API key. Query text sent externally; opt-in with disclosure.
 - Single text field → structured JSON: `{artist, bpm_range, key_camelot, genre, vibe_query, lyric_mode}`
-- Requires settings toggle + model download (~2-8GB)
-- Falls back to rule-based if model unavailable or disabled
+- Falls back to rule-based if unavailable or disabled
 
 ### Recommended Approach
 **Rule-based first, always search audio vectors.** An LLM is overkill for routing and adds weight/dependency. For a DJ tool, exact artist/BPM/key matching via dropdowns + autocomplete is more reliable than parsing free text. The "smart mode" single-field experience can be layered on later as an optional enhancement for users who prefer it.
