@@ -144,7 +144,7 @@ A) **Require full re-embedding**: Clear collection, re-process entire library wi
 B) **Versioned collections**: Create new Qdrant collection per model version (e.g., `tracks_clap_v1`, `tracks_mert_v1`). Switch is instant but uses more disk.
 C) **Lazy migration**: Re-embed tracks on-demand during search if vector dimension mismatches. Slow first search, then fast.
 
-**Recommendation pending - see question below.**
+**Recommendation: Option A (Full Re-embedding).** On model switch, show confirmation modal with estimated time. User confirms, app clears collection and re-ingests. Prevents silent data corruption and keeps implementation simple.
 
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
@@ -154,6 +154,69 @@ C) **Lazy migration**: Re-embed tracks on-demand during search if vector dimensi
 - **Open source**: Yes, for trust and community
 - **Embedding**: Local CLAP default; optional remote worker for large libraries / no GPU
 - **Remote worker**: Same repo, configured via Settings UI (no CLI flags)
+- **Model switching**: Full re-embedding with explicit user confirmation
+
+## Assumptions & Gaps to Address
+
+### Settings Storage
+- **Assumption**: Settings are stored in a JSON file in the app's data directory
+- **Gap**: Need to define exact location per OS (XDG on Linux, AppData on Windows, ~/Library/Application Support on macOS)
+- **Decision**: Use platformdirs library for cross-platform paths; settings.json in that directory
+
+### FastAPI Lifecycle in PyWebView
+- **Assumption**: FastAPI server runs in the same process as PyWebView
+- **Gap**: How is the server started/stopped? Thread? Subprocess?
+- **Decision**: FastAPI runs in a background thread within the PyWebView process; app startup starts the server, shutdown stops it cleanly
+
+### Qdrant Embedded Mode
+- **Assumption**: "Docker or embedded" implies both are equally viable
+- **Gap**: Qdrant's embedded mode is actually a Rust binary that needs to be packaged
+- **Decision**: Default to Docker for dev; for packaged app, use Qdrant's embedded binary or ship a portable Qdrant binary. Provide clear Docker alternative for power users.
+
+### Audio Format Support
+- **Assumption**: All audio files are valid and readable
+- **Gap**: Corrupted files, DRM, unsupported codecs
+- **Decision**: Support MP3, FLAC, WAV, AIFF, M4A (AAC). Skip unsupported/corrupt files with error logging. Show skipped files in UI.
+
+### Library Path Handling
+- **Assumption**: File paths are stable
+- **Gap**: User moves music folder, uses external drive, or has different mount points
+- **Decision**: Store absolute paths in Qdrant payload. Provide "Relocate Library" feature in settings to bulk-update paths. Detect missing files on startup.
+
+### PyInstaller Data Files
+- **Assumption**: Static assets (HTML/JS frontend) are available
+- **Gap**: PyInstaller doesn't include non-Python files by default
+- **Decision**: Use `--add-data` for frontend assets. Models downloaded at runtime to user's data directory, not bundled.
+
+### Model Cache Location
+- **Assumption**: HF models are cached somewhere
+- **Gap**: Transformers cache location varies by OS and environment
+- **Decision**: Use platformdirs for model cache location. Allow user to override in settings. Download on first use, not at install time.
+
+### Settings UI Implementation
+- **Assumption**: Settings UI is HTML/JS within PyWebView
+- **Gap**: Native OS settings vs web UI
+- **Decision**: Settings are a web page within PyWebView. Persisted to local JSON. No native settings dialogs.
+
+### Ingestion Cancellation
+- **Assumption**: Ingestion runs to completion
+- **Gap**: User may want to stop a long job
+- **Decision**: Background thread with cancellation token. UI shows progress and cancel button. Partial results are preserved.
+
+### Duplicate Detection
+- **Assumption**: Each file is unique
+- **Gap**: User drops same file twice, or has duplicates in library
+- **Decision**: Deduplicate by file path hash (SHA-256 of absolute path + modification time). Skip if already indexed. Allow manual re-ingestion.
+
+### Track ID Strategy
+- **Assumption**: UUID is stable across sessions
+- **Gap**: What if file moves or is re-ingested?
+- **Decision**: Track ID = SHA-256 of (absolute file path + file size + last modified timestamp). Stable across app restarts, changes if file is modified.
+
+### Cross-Platform Paths in Qdrant
+- **Assumption**: Paths work across OS
+- **Gap**: Windows paths (C:\Users\...) won't work on macOS/Linux and vice versa
+- **Decision**: Store absolute paths. Qdrant collection is not shared across OS. If user moves library, use "Relocate Library" feature.
 
 ## Open Questions
 1. **Test library available?** Needed for early validation.
