@@ -236,12 +236,27 @@ When a user switches models, existing vectors in Qdrant are incompatible because
    - "songs with sad lyrics" → matches melancholic themes even without the word "sad"
    - Best for: Theme/emotion-based discovery ("find me something with hopeful lyrics")
 
+### Lyric Query Router
+For lyric searches specifically, the router decides keyword vs semantic based on query characteristics:
+- **Keyword mode** (default): 
+  - Quoted phrases: `"lonely road"`
+  - Short, specific text: 1-4 words that look like a phrase
+  - Contains proper nouns or unusual words
+- **Semantic mode**:
+  - Conceptual phrases: "songs about waterfalls", "songs with hopeful lyrics"
+  - Abstract themes: "heartbreak", "summer love", "growing up"
+  - Longer queries with abstract nouns
+- **Both** (UI toggle):
+  - Runs keyword first, then semantic, merges results
+  - Removes duplicates, ranks by combined score
+
 ### Implementation
 - Store `lyrics_full` (plain text transcript) and `lyrics_timestamps` (word-level timestamps from WhisperX)
 - Generate `lyric_vector` using a text embedding model (BGE-M3 or similar)
 - When user enables lyric search:
-  - If query is short/phrase-like → keyword search first, semantic as fallback
-  - If query is conceptual/abstract → semantic search
+  - Route based on query characteristics above
+  - Keyword search: SQLite FTS5 or simple text search over `lyrics_full`
+  - Semantic search: Qdrant cosine similarity on `lyric_vector`
 - UI toggle: "Search lyrics" checkbox + mode selector (Keyword / Semantic / Both)
 
 ### Use Case for Semantic Lyric Search
@@ -251,6 +266,33 @@ When a user switches models, existing vectors in Qdrant are incompatible because
 
 ### Recommendation
 Provide both. Keyword for precision, semantic for theme discovery. Default to keyword for exact phrases, semantic for vague/thematic queries.
+
+## Audio Quality Checker
+
+### Purpose
+Detect potential upsampling and estimate true bitrate/quality. DJs care because upsampled files (e.g., 128kbps MP3 labeled as 320kbps) sound worse on quality sound systems.
+
+### Detection Method
+Analyze spectral content and encoding artifacts:
+1. **Frequency cutoff analysis**: Genuine 320kbps MP3 has content up to ~20kHz; upsampled 128kbps usually cuts off around 16kHz
+2. **Quantization noise**: Check for abnormal noise floors in high frequencies
+3. **Entropy analysis**: Compare actual spectral entropy to expected entropy for claimed bitrate
+4. **Artifact detection**: Look for pre-echo, ringing, or other encoding artifacts
+
+### Output
+Store in payload:
+```json
+{
+  "estimated_true_bitrate": 192,
+  "quality_flag": "possibly_upsampled",  // "verified" | "possibly_upsampled" | "low_quality"
+  "quality_notes": "Frequency cutoff at 16.2kHz suggests 192-224kbps source"
+}
+```
+
+### UI Display
+- Show quality flag in library browser with color indicator
+- Allow filtering by quality (e.g., "show only verified high-quality files")
+- Export quality flag in playlist metadata
 
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
