@@ -505,29 +505,62 @@ Flag tracks that may be AI-generated based on spectral and structural artifacts.
 
 ## Testing & Evaluation
 
-### Automatic Background Evaluation
-When a model is added, evaluate it automatically in the background without blocking the UI. The evaluation runs once and stores results for comparison.
+### What We Can and Cannot Evaluate Automatically
+- **Cannot**: Automatically judge if "dark brooding" matches the user's intent. No ground truth exists without user feedback.
+- **Cannot**: Compute true Precision@5/Recall@5 without labeled relevance data.
+- **Cannot**: Translate your test library ratings to other users' libraries. DJ vocabularies and library distributions are personal.
+- **Can**: Verify deterministic filters work (artist, BPM, key constraints).
+- **Can**: Detect regressions by comparing same-query results across model versions.
+- **Can**: Track implicit user behavior (clicks, previews, exports) as relevance signals.
 
-**What we're evaluating:** retrieval quality on DJ-specific queries against the user's actual library. Not vector dimensions, not general audio-text benchmarks.
+### Model Evaluation Protocol
+When a user adds a new model, the app evaluates it in the background without blocking the UI.
 
-**Evaluation Protocol:**
-1. App generates a standardized test suite from the user's library:
+**Background Pre-computation:**
+1. Generate a standardized query set from the user's library:
    - 20-50 vibe queries sampled from common DJ vocabulary
    - 10 hybrid metadata+vibe queries (artist + BPM + key + vibe)
-   - 10 lyric semantic queries (if lyrics enabled)
-   - Queries are generated from actual library metadata (existing artists, genres, BPMs)
-2. For each query, run search and compute:
-   - **Precision@5**: % of top-5 results that are relevant
-   - **Coverage**: % of queries with ≥1 relevant result
-   - **Implicit relevance signals** (if available):
-     - Click-through rate on results
-     - Whether user played previewed track
-     - Whether user exported/dragged result to DJ software
-3. Store composite score: `{"model_id": "...", "score": 7.8, "precision@5": 0.65, "coverage": 0.9, "num_queries": 40, "last_evaluated": "..."}`
-4. Show in Settings UI: "Rated 7.8/10 on your library (40 queries)"
+   - Queries generated from actual library metadata (existing artists, genres, BPMs)
+2. Run each query through the new model
+3. Store results for each query (track IDs + ranks)
+4. Do NOT compute a score yet — there is no ground truth
+5. Show in Settings UI: "Model X — evaluating in background"
+
+**Scoring (requires user feedback):**
+- Precision@5, Coverage, and other metrics are only computed after the user provides relevance signals
+- Sources of relevance:
+  - **Explicit**: Test mode ratings (1-10 slider after searches)
+  - **Implicit**: Clicks, preview plays, exports/drags to DJ software, query refinements
+- Once ≥20 rated queries accumulate, compute composite score and display: "Rated 7.8/10 on your library"
+- Until then, show "Not enough data — use test mode to rate results"
+
+### Side-by-Side Model Comparison
+Encourage the user to compare models directly when switching:
+
+**Workflow:**
+1. User enables "Compare Mode" in Settings
+2. Selects two models: current (A) and candidate (B)
+3. For each search, results from both models are shown side-by-side
+4. User rates each model's results independently (1-10)
+5. App computes comparative metrics: "Model B wins on 8/12 queries, avg +1.2 rating"
+6. User can switch to winning model with one click
+
+**Why this matters:**
+- Vector ranking is the entire search "intelligence" — there are few other knobs to turn
+- If we're just ranking non-filtered songs by cosine similarity, the model IS the ranking function
+- Side-by-side comparison is the only reliable way to choose between models
+- Your ratings on your library are personal and don't generalize, but they tell you which model works for YOUR use case
+
+### Per-Model Default Settings
+Store tuned defaults per model in registry:
+- `similarity_threshold`: CLAP ~0.7, MERT ~0.65 (tighter vs looser clusters)
+- `result_limit`: Some models need more results to surface variety
+- `filter_strength`: Weight of metadata pre-filtering vs. vector similarity
+
+These are starting points, not optimized values. Real optimization comes from your side-by-side comparisons and implicit feedback.
 
 ### Implicit Feedback Signals
-Collect lightweight interaction data to continuously refine search quality without explicit ratings:
+Collect lightweight interaction data to continuously refine search quality:
 
 **Track per-query:**
 - Query text and parsed filters
@@ -544,7 +577,7 @@ Collect lightweight interaction data to continuously refine search quality witho
 - Audio content or full file paths in feedback logs (use track IDs only)
 
 **Use implicit data to:**
-- Boost models that produce more clicks/exports
+- Boost models that produce more clicks/exports in side-by-side tests
 - Identify queries with zero engagement → flag for review
 - Adjust ranking weights per model based on actual user behavior
 
