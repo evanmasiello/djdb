@@ -196,10 +196,32 @@ When a user switches models, existing vectors in Qdrant are incompatible because
 - Requires settings toggle + model download (~2-8GB)
 - Falls back to rule-based if model unavailable
 
-### Hybrid UI
-- Default view: filter chips/dropdowns + vibe search bar
-- Toggle to "Smart Mode": collapses filters into one text field
-- Autocomplete dropdowns always available for precision
+### Query Routing & Decomposition
+
+### Query Types
+1. **Metadata filter**: artist, BPM, key, genre
+2. **Audio vibe query**: semantic search against CLAP embeddings ("dark brooding", "sunset vibes")
+3. **Lyric keyword**: exact/fuzzy phrase match in lyrics ("I saw a waterfall")
+4. **Lyric semantic**: thematic search against lyric embeddings ("songs about waterfalls")
+
+### Default: Rule-Based Router
+- No LLM required. Runs locally, zero latency, zero cost.
+- Steps:
+  1. Match known artists/genres/keys from library → metadata filters
+  2. Detect BPM range patterns → metadata filter
+  3. Detect quoted phrases or short specific text → lyric keyword search
+  4. Remaining text → audio vibe query
+  5. If lyrics enabled and query looks conceptual → also run lyric semantic search
+- Always search audio vectors. Lyrics are additive.
+
+### Optional: Smart Mode (Local LLM)
+- Small downloadable model (Phi-3 Mini 3.8B, Llama 3.2 1B/3B)
+- Single text field → structured JSON: `{artist, bpm_range, key_camelot, genre, vibe_query, lyric_mode}`
+- Requires settings toggle + model download (~2-8GB)
+- Falls back to rule-based if model unavailable or disabled
+
+### Recommended Approach
+**Rule-based first, always search audio vectors.** An LLM is overkill for routing and adds weight/dependency. For a DJ tool, exact artist/BPM/key matching via dropdowns + autocomplete is more reliable than parsing free text. The "smart mode" single-field experience can be layered on later as an optional enhancement for users who prefer it.
 
 ## Lyric Search Strategy
 
