@@ -160,12 +160,35 @@ For a model to be pluggable, it must:
 - Be loadable via `transformers` or `clap` libraries
 - Have consistent input/output contracts
 
-### Settings UI: "Embedding Model" Section
-- Dropdown of preset models with dimensions and description
-- "Add custom model" button (HF Hub ID or local path)
-- Model info display: name, dimensions, size, last validated
-- Test button: embed a sample audio snippet to verify compatibility
-- Active model stored in local settings
+### Per-Model Evaluation
+When a model is added, the app evaluates it on the user's library before allowing it to be used for search. General audio-text benchmarks don't measure DJ-specific retrieval quality, and two models with the same dimensions can have completely different "meaning spaces."
+
+**What we're testing:** retrieval quality on actual DJ queries, not just vector dimensions. Whether the model's representation of music meaning aligns with how DJs think about tracks.
+
+**Evaluation Protocol:**
+1. On model addition, run a standardized test suite against the user's library:
+   - 20-50 vibe queries ("dark", "uplifting", "summer vibes")
+   - 10 artist+BPM+key hybrid queries
+   - 10 lyric semantic queries (if lyrics enabled)
+2. For each query, compute Precision@5 and user rating (1-10) if in test mode
+3. Store model score in registry and display in Settings UI
+
+**Model-Specific Default Settings:**
+Different models may need different search parameters:
+- Similarity threshold: CLAP might need 0.7, MERT might need 0.65
+- Filter weights: Some models respond better to stricter metadata pre-filtering
+- Result count: Some models produce tighter clusters and need more results
+
+Store per-model defaults in registry alongside score.
+
+### Model Leaderboard
+In Settings UI, show ranked list of available models based on:
+1. Evaluation score on user's library (primary)
+2. Model size (smaller = faster on CPU)
+3. Dimensions (affects Qdrant memory usage)
+4. User ratings from test mode
+
+Allow user to compare models side-by-side before switching.
 
 ### Critical: Model Switching Behavior
 When a user switches models, existing vectors in Qdrant are incompatible because:
