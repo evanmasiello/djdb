@@ -1,59 +1,56 @@
 # DJ Song Semantic Search System - Implementation Plan
 
-## Goal
-Build a hybrid search engine for DJ music libraries that combines:
-- **LLM-parsed metadata filtering** (artist, BPM, key, genre)
-- **Semantic vector search** via LAION-CLAP (vibe/meaning)
-- **Lyric search** via WhisperX transcription
-- **Smart ingestion pipeline** with AudD/Cyanite metadata enrichment
+## Scope & Constraints
+- **Single user, local-only**: No auth, no cloud sync, no multi-tenancy
+- **Cross-platform desktop app** via PyWebView + FastAPI backend, packaged with PyInstaller
+- **Offline-first core search**: All search happens locally; no API calls at query time
+- **Local Qdrant**: Embedded or Docker-managed; no cloud Qdrant needed
+- **No LLM dependency for core search**: (Decision pending - see below)
 
-## Tech Stack
+## Tech Stack (Revised for Local/Personal Use)
 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
-| **Language** | Python 3.10+ | Best ecosystem for audio ML (librosa, CLAP, WhisperX) |
-| **Vector DB** | Qdrant (local or cloud) | Best-in-class pre-filtering + hybrid search, Python client |
-| **Audio Embedding** | LAION-CLAP (laion/larger_clap) | Joint audio-text space, proven for music vibe search |
-| **Lyric Embedding** | text-embedding-3-small or BGE-M3 | Fast, high-quality text embeddings for lyrics |
-| **LLM Parser** | OpenAI GPT-4o-mini | Structured JSON output for query decomposition |
-| **Audio DSP** | Librosa + Essentia | BPM, key, onset detection |
-| **Metadata APIs** | AudD (recognition) + Soundcharts/The DJ API (features) | Cost-effective ingestion pipeline |
-| **API Framework** | FastAPI | Fast, async, auto-documenting |
-| **Task Queue** | Celery + Redis | Async ingestion jobs for large libraries |
-| **Frontend** | TBD (web app vs desktop) | Out of scope for initial plan |
+| **Language** | Python 3.10+ | Best ecosystem for audio ML |
+| **Desktop Shell** | PyWebView | Native OS window rendering local HTML/JS frontend; FastAPI backend runs on localhost in same process |
+| **Packaging** | PyInstaller | Single executable/bundle for Win/Mac/Linux |
+| **Vector DB** | Qdrant (local/Docker) | Best pre-filtering + hybrid search; can run embedded |
+| **Audio Embedding** | LAION-CLAP (laion/larger_clap) | Joint audio-text space; runs locally, no API cost |
+| **Lyric Embedding** | BGE-M3 or text-embedding-3-small | Fast local text embeddings (if lyrics enabled) |
+| **LLM Parser** | **TBD - see question below** | Optional enhancement |
+| **Audio DSP** | Librosa | BPM, key, duration; offline, no API |
+| **Metadata APIs** | AudD (optional, ingestion only) | Only for untagged files; ~$0.005/recognition |
+| **API Framework** | FastAPI | Serves both local UI and potential future integrations |
+| **Task Queue** | Not needed | Personal library = synchronous ingestion acceptable |
+| **Lyrics** | WhisperX (optional, local) | GPU-accelerated transcription at ingestion time |
 
-## Architecture
+## Architecture (Revised for Local Use)
 
 ```
-User Query: "dark brooding charli xcx track around 125 bpm"
-     │
-     ▼
-┌─────────────────────────────────────────────────────┐
-│  LLM Query Parser (GPT-4o-mini)                     │
-│  Output: {                                          │
-│    metadata_filters: { artist: "Charli XCX",        │
-│                        bpm_range: [120, 130] },     │
-│    semantic_query: "dark brooding track"             │
-│  }                                                  │
-└──────────────┬──────────────────────────────────────┘
-               │
-       ┌───────┴────────┐
-       ▼                ▼
-┌──────────────┐  ┌──────────────────┐
-│ Qdrant       │  │ Lyrics Index     │
-│ Pre-filter:  │  │ (if lyrics       │
-│ artist=Charli│  │  enabled)        │
-│ XCX +        │  └──────────────────┘
-│ bpm 120-130  │
-│             │
-│ Vector      │
-│ search:     │
-│ "dark       │
-│ brooding"   │
-└──────────────┘
-       │
-       ▼
-  Ranked Results
+┌──────────────────────────────────────────────────────────┐
+│  Desktop App Window (PyWebView)                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │  Local HTML/JS Frontend                            │  │
+│  │  - Search bar                                      │  │
+│  │  - Library browser                                 │  │
+│  │  - Ingestion progress                              │  │
+│  └───────────────────────┬────────────────────────────┘  │
+└──────────────────────────┼───────────────────────────────┘
+                           │ HTTP (localhost)
+┌──────────────────────────▼───────────────────────────────┐
+│  FastAPI Backend (same process)                          │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐  │
+│  │ Ingestion   │  │ Search       │  │ Library        │  │
+│  │ Pipeline    │  │ Engine       │  │ Browser        │  │
+│  └─────────────┘  └──────────────┘  └────────────────┘  │
+│                           │                              │
+│          ┌────────────────┼────────────────┐            │
+│          ▼                ▼                ▼            │
+│   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
+│   │ Qdrant       │ │ WhisperX     │ │ AudD API     │   │
+│   │ (local)      │ │ (optional)   │ │ (optional)   │   │
+│   └──────────────┘ └──────────────┘ └──────────────┘   │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Data Model
@@ -75,7 +72,7 @@ User Query: "dark brooding charli xcx track around 125 bpm"
     "duration_seconds": 132,
     "file_path": "/library/charli_xcx/von_dutch.mp3",
     "lyrics_snippet": "It's okay to admit...",
-    "lyric_vector": [0.01, -0.88, ...],  // Optional: text embedding
+    "lyric_vector": [0.01, -0.88, ...],  // Optional
     "date_added": "2026-08-30"
   }
 }
@@ -85,108 +82,84 @@ User Query: "dark brooding charli xcx track around 125 bpm"
 
 ### Phase 1: Project Setup & Ingestion Pipeline
 1. Initialize Python project with pyproject.toml
-2. Set up Qdrant (Docker or cloud)
+2. Set up local Qdrant (Docker or embedded mode)
 3. Implement audio file scanner + metadata extractor
-4. Build AudD integration for unknown tracks
+4. Build optional AudD integration for unknown tracks
 5. Extract CLAP embeddings for all tracks
 6. Store in Qdrant with metadata payload
 
-### Phase 2: Hybrid Search Backend
-1. Implement LLM query parser with structured output
-2. Build Qdrant hybrid search client (pre-filter + vector)
-3. Implement lyrics index (separate collection or payload)
-4. Add result ranking + scoring
+### Phase 2: Search Backend
+1. Build Qdrant hybrid search client (pre-filter + vector)
+2. Implement query parser (TBD: LLM vs rule-based)
+3. Add optional lyrics search path
+4. Result ranking + scoring
 
-### Phase 3: API Layer
-1. FastAPI app with `/search` endpoint
-2. `/ingest` endpoint for adding tracks
-3. `/library` endpoint for metadata browsing
+### Phase 3: Desktop App Shell
+1. FastAPI backend with `/search`, `/ingest`, `/library` endpoints
+2. PyWebView wrapper opening local frontend
+3. Simple HTML/JS UI for search and library browsing
 
-### Phase 4: Optional Enhancements
-1. WhisperX lyric transcription during ingestion
-2. Web UI
-3. Real-time key/BPM matching (Magic Fit)
-4. Audio preview playback with pitch/time-stretch
+### Phase 4: Polish
+1. WhisperX lyric transcription (optional)
+2. Audio preview playback in UI
+3. Packaging with PyInstaller for distribution
 
 ## Key Design Decisions
 
-### 1. Metadata API Strategy
-- **AudD** for recognition: ~$0.005/query, 300 free requests
-- **Cache aggressively**: Only call APIs during ingestion, never at query time
-- **Fallback chain**: File tags → AudD → Soundcharts
+### 1. Local-First Data Strategy
+- **Library stored on local filesystem**: DJ points app at their music folder
+- **Qdrant data stored locally**: Either Docker volume or embedded binary
+- **No cloud sync**: All processing happens on the user's machine
+- **AudD as optional enrichment**: Only for untagged files; one-time cost per track
 
-### 2. Query Parsing
-- Use OpenAI structured outputs (`response_format={ "type": "json_schema" }`)
-- Schema: `artist`, `bpm_range`, `key_camelot`, `genre`, `vibe_query`
-- Validate against known library values to avoid hallucinations
+### 2. Query Parsing Strategy
+**Critical decision pending - see question below.**
 
-### 3. Dual Vector Strategy
-- **CLAP vector**: Captures timbre, mood, texture
-- **Lyric vector**: Captures lyrical meaning
-- Query routes to one or both based on user preference
-
-### 4. Cost Control
-- All API calls happen during ingestion (not search)
-- Offline DSP (librosa) for BPM/key on local files
-- CLAP model runs locally (no API cost)
+### 3. Cost Control
+- Zero recurring API costs for core functionality
+- CLAP and WhisperX run locally (no inference API)
+- Optional AudD calls only during ingestion of untagged files
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| AudD cost at scale | Only recognize untagged files; cache ISRCs |
-| CLAP embedding quality on full songs | Test both 30s clip vs full track embedding |
-| LLM hallucination on metadata | Validate extracted values against library catalog |
-| Large library indexing time | Parallelize with Celery; batch API calls |
-| WhisperX GPU requirement | Make optional; fall back to no-lyrics mode |
+| CLAP embedding quality on full songs | Test 30s clip vs full track; default to first 30s + last 30s |
+| Large library indexing time | Show progress in UI; run synchronously for personal use |
+| WhisperX GPU requirement | Make optional; gracefully degrade to no-lyrics mode |
+| PyInstaller bundle size | Use UPX compression; document requirements |
+| Qdrant Docker dependency | Provide embedded fallback or SQLite-based vector store |
 
 ## Validation Plan
-
-1. **Unit tests**: LLM parser, filter builder, embedding consistency
+1. **Unit tests**: Parser, filter builder, embedding consistency
 2. **Integration test**: Ingest 10 test tracks, run hybrid queries, verify results
 3. **Performance test**: 1000-track library search latency < 200ms
-4. **Accuracy test**: Manually verify top-5 results for 20 semantic queries
-
-## Files to Create
-
-```
-dj-semantic-search/
-├── pyproject.toml
-├── README.md
-├── src/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── models.py
-│   ├── db/
-│   │   ├── __init__.py
-│   │   ├── qdrant_client.py
-│   │   └── schema.py
-│   ├── ingestion/
-│   │   ├── __init__.py
-│   │   ├── scanner.py
-│   │   ├── metadata.py
-│   │   ├── embeddings.py
-│   │   └── pipeline.py
-│   ├── search/
-│   │   ├── __init__.py
-│   │   ├── parser.py
-│   │   └── hybrid_search.py
-│   ├── lyrics/
-│   │   ├── __init__.py
-│   │   └── transcriber.py
-│   └── api/
-│       ├── __init__.py
-│       ├── main.py
-│       └── routes.py
-├── tests/
-│   ├── __init__.py
-│   ├── test_parser.py
-│   └── test_search.py
-└── docker-compose.yml
-```
+4. **Packaging test**: Build PyInstaller bundle on Win/Mac/Linux
 
 ## Open Questions
 
 1. **Should the frontend be web-based or desktop?** Web is more accessible; desktop enables direct DAW integration.
 2. **Do you have an existing music library to test with?** Needed for early validation.
 3. **GPU availability?** CLAP and WhisperX run much faster on GPU; CPU fallback is possible but slow.
+
+## Remaining Critical Decision
+
+**Query Parsing: LLM vs Rule-Based?**
+
+For a local, personal tool, the query parser can be either:
+
+**Option A: Rule-Based (Recommended)**
+- Regex/string matching against known library values (artists, genres, keys in your library)
+- Parse patterns like "artist X", "BPM range", "key"
+- Zero cost, zero latency, works offline
+- Limitation: Less flexible for vague queries ("something dark")
+
+**Option B: LLM-Based (OpenAI API)**
+- GPT-4o-mini structured outputs
+- More natural language understanding
+- Requires API key, internet, adds ~100-300ms latency per search
+- Better for complex/ambiguous queries
+
+**Recommendation: Start with rule-based.** For a personal library, you know your artists and can match against them directly. Add LLM as an optional enhancement later if needed. This keeps the tool fully offline and free.
+
+**Question: Are you comfortable with rule-based parsing for metadata extraction, or do you want the flexibility of an LLM from day one?**
