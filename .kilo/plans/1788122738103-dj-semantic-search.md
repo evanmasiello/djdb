@@ -65,23 +65,23 @@ Each track in Qdrant:
    - Library browser
    - Ingestion progress UI
 4. Drag-IN: file drop → `/ingest`
-5. Drag-OUT: hybrid approach
-   - OS file drag from results (webkit/webview2)
-   - Fallback: export buttons (M3U, Rekordbox XML)
+ 5. Drag-OUT: hybrid approach
+    - OS file drag from results (webkit/webview2)
+    - Fallback: export buttons (M3U, Rekordbox XML, Serato SB)
 
 ### Phase 4: Polish & Distribution
 1. WhisperX lyric transcription (optional, GPU-aware)
 2. Audio preview playback in UI
-3. Additional playlist export formats
+3. Export formats: Rekordbox XML, Serato SB, M3U
 4. PyInstaller packaging
 5. README and setup docs
 
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
 - **Drag-out**: Hybrid file drag + export buttons
+- **Export formats**: Rekordbox XML, Serato SB, M3U
 - **Metadata**: Offline-first; AudD only for untagged files during ingestion
 - **Open source**: Yes, for trust and community
 
 ## Open Questions
-1. **Target DJ software for export?** Rekordbox, Serato, Traktor, VirtualDJ, or all? Determines export format priority.
-2. **Test library available?** Needed for early validation.
+1. **Test library available?** Needed for early validation.
