@@ -165,12 +165,32 @@ When a user switches models, existing vectors in Qdrant are incompatible because
 - Even same dimensions have different geometric spaces
 - Old vectors cannot be compared to new query vectors
 
-**Options for handling model switches:**
-A) **Require full re-embedding**: Clear collection, re-process entire library with new model. User is warned and must confirm.
-B) **Versioned collections**: Create new Qdrant collection per model version (e.g., `tracks_clap_v1`, `tracks_mert_v1`). Switch is instant but uses more disk.
-C) **Lazy migration**: Re-embed tracks on-demand during search if vector dimension mismatches. Slow first search, then fast.
+**Decision: Full Re-embedding.** On model switch, show confirmation modal with estimated time. User confirms, app clears collection and re-ingests. Prevents silent data corruption and keeps implementation simple.
 
-**Recommendation: Option A (Full Re-embedding).** On model switch, show confirmation modal with estimated time. User confirms, app clears collection and re-ingests. Prevents silent data corruption and keeps implementation simple.
+## Query Parsing: Smart Mode vs Rule-Based
+
+### Rule-Based (Default)
+- Parse known values from the user's own library:
+  - Exact artist name matches
+  - BPM range patterns ("around 120", "120-130", "130+")
+  - Key patterns (Camelot 1A-12A/1B-12B, open notation "C minor")
+  - Genre tags
+- Provide autocomplete/suggestions as the user types, populated from actual library data
+- Remaining text → semantic vector query
+
+### Smart Mode (Optional)
+- Single text field for natural language queries
+- Small downloadable LLM runs locally for structured extraction:
+  - Phi-3 Mini 3.8B (recommended default)
+  - Llama 3.2 1B/3B (lighter, faster on CPU)
+- Extracts: artist, bpm_range, key_camelot, genre, vibe_query
+- Requires settings toggle + model download (~2-8GB)
+- Falls back to rule-based if model unavailable
+
+### Hybrid UI
+- Default view: filter chips/dropdowns + vibe search bar
+- Toggle to "Smart Mode": collapses filters into one text field
+- Autocomplete dropdowns always available for precision
 
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
