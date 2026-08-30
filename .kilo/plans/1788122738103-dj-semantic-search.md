@@ -67,6 +67,7 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 ## Onboarding & Library Management
 - **First-run / Empty library**: Show prominent prompt: "Drag in audio files or select a folder to get started"
 - **Relocate Library**: Settings option to bulk-update file paths if music folder moves
+- **File modification**: On re-scan, detect changed file hash. Update existing track record in place rather than creating duplicate.
 
 ## API Keys & External Services
 - **AudD**: API key stored in Settings UI. Only used during ingestion for untagged files.
@@ -118,7 +119,7 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 ### Phase 4: Polish & Distribution
 1. WhisperX lyric transcription (optional, GPU-aware)
 2. Audio preview playback in UI
-3. Export formats: Rekordbox XML, Serato SB, M3U
+3. Export formats: Rekordbox XML, Serato SB, M3U (stream to disk for large exports)
 4. PyInstaller packaging
 5. README and setup docs
 
@@ -450,7 +451,7 @@ src/
 │   └── schema.py      # Payload definitions, indexes
 ├── ingestion/
 │   ├── __init__.py
-│   ├── scanner.py     # File system watcher, recursive scan
+│   ├── scanner.py     # Recursive folder scan, format validation
 │   ├── metadata.py    # mutagen tags, AudD API client
 │   ├── embeddings.py  # Local CLAP encoder (default)
 │   ├── quality.py     # Audio quality checker (upsampling detection)
@@ -648,6 +649,18 @@ For users who want offloaded embedding without self-hosting infrastructure:
 - Backend-agnostic REST API: multipart upload → JSON vector response
 - User provides worker URL + optional API key in Settings
 - Not included in initial release to keep scope manageable
+
+### Auto-Scan / File Watcher (Stretch Goal)
+- Background watcher detects new files in indexed folders and ingests them automatically
+- Requires platform-specific file watcher (inotify/FSEvents/ReadDirectoryChangesW)
+- Debounce logic to avoid re-ingesting during bulk file operations
+- Not included in initial release; manual re-scan button is the v1 alternative
+
+### Model Fine-Tuning (Stretch Goal)
+- Collect feedback data in structured form for potential future fine-tuning
+- Requires: aggregated data from many users, GPU infrastructure, ML engineering
+- Not feasible from single-user feedback alone
+- v1 scope: use feedback for model selection and ranking parameters only
 
 ## Open Questions
 1. **Test library available?** Needed for early validation.
