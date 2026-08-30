@@ -8,8 +8,8 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 - **Backend**: FastAPI on localhost (same process)
 - **Packaging**: PyInstaller for Win/Mac/Linux
 - **Vector DB**: Qdrant (bundled portable binary, no Docker)
-- **Audio embeddings**: LAION-CLAP (local default; optional remote worker for large libraries/no GPU)
-- **Remote embedding API**: Optional cloud endpoint to offload CLAP generation for users without GPUs or with large libraries
+- **Metadata DB**: SQLite (local file, stores track metadata, lyrics, feedback)
+- **Audio embeddings**: LAION-CLAP (local default)
 - **Lyrics**: WhisperX (optional, local)
 - **Metadata**: File tags + optional AudD API for untagged files + import from DJ software (Serato, Virtual DJ, Rekordbox)
 
@@ -17,7 +17,7 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 Each track in Qdrant:
 ```json
 {
-  "id": "uuid",
+  "id": "sha256_file_hash",
   "vector": [...],  // CLAP audio embedding
   "payload": {
     "title": "...",
@@ -33,10 +33,10 @@ Each track in Qdrant:
     "file_hash": "sha256...",
     "sample_rate": 44100,
     "bitrate": 320,
+    "quality_flag": "verified",  // "verified" | "possibly_upsampled" | "low_quality"
+    "quality_notes": "...",
     "lyrics_snippet": "...",
-    "lyrics_full": "...",
-    "lyrics_timestamps": [...],
-    "lyric_vector": [...],  // optional
+    "lyric_vector": [...],  // optional, stored in Qdrant
     "tags": ["warmup", "peak", "vinyl-only"],
     "rating": 4,
     "color_label": "green",
@@ -45,12 +45,18 @@ Each track in Qdrant:
   }
 }
 ```
+- `lyrics_full` and `lyrics_timestamps` are stored in SQLite, not Qdrant payload (payload size limits)
+- Track ID = SHA-256 of full file contents. Stable across moves, changes only when file content changes.
+- Quality checker handles lossy (MP3, M4A) and lossless (FLAC, WAV, AIFF) differently:
+  - Lossy: frequency cutoff, quantization noise, entropy analysis
+  - Lossless: clipping detection, spectral flatness, dynamic range, noise floor
 
 ## What Qdrant Is
 Qdrant is the vector database that powers the semantic search. It stores the numerical "fingerprints" (embeddings) of each track and lets you find similar tracks by meaning, not just keywords. When you search "dark brooding charli xcx", Qdrant finds tracks whose audio vectors are mathematically close to the text vector, optionally filtered by metadata. It runs as a bundled binary inside the app—no Docker, no cloud.
 
 ## Search UX
 - **Primary search bar**: Free-text for vibe/semantic queries ("dark brooding", "sunset beach vibes")
+- **Empty query**: Returns all tracks (paginated), no filters applied
 - **Filter chips/dropdowns**: Separate deterministic fields:
   - Artist (dropdown populated from library)
   - BPM range (slider or min/max inputs)
@@ -59,13 +65,11 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 - **Hybrid behavior**: Metadata filters narrow the candidate set; vector search ranks within that set
 
 ## Onboarding & Library Management
-- **First-run**: Prompt user to add music folders before searching
-- **Auto-scan**: Background watcher detects new files in indexed folders and ingests them automatically
+- **First-run / Empty library**: Show prominent prompt: "Drag in audio files or select a folder to get started"
 - **Relocate Library**: Settings option to bulk-update file paths if music folder moves
 
 ## API Keys & External Services
 - **AudD**: API key stored in Settings UI. Only used during ingestion for untagged files.
-- **Remote Worker**: URL + optional API key stored in Settings UI.
 - **LLM API** (optional): API key for remote query routing (OpenAI, Anthropic, etc.). Stored in Settings UI. Only used if Smart Mode is enabled and remote API is selected. Opt-in with privacy disclosure.
 
 ## WhisperX & Model Selection
@@ -80,15 +84,14 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 
 ### Phase 1: Project Setup & Ingestion
 1. `pyproject.toml` with deps: fastapi, qdrant-client, laion-clap, librosa, pywebview, pyinstaller
-  2. Qdrant setup (bundled portable binary)
-3. Audio file scanner (recursive folder scan, format validation)
-4. Metadata extractor (file tags via mutagen)
-5. Metadata import from DJ software (Serato SB, Virtual DJ XML, Rekordbox XML)
-6. Embedding provider abstraction:
-    - Local CLAP encoder (default)
-    - Remote API client (optional, for large libraries / no GPU)
-7. Ingestion pipeline: scan → metadata → embed → store
-8. Optional AudD integration for missing metadata
+   2. Qdrant setup (bundled portable binary)
+3. SQLite setup (local file for track metadata, lyrics, feedback)
+4. Audio file scanner (recursive folder scan, format validation)
+5. Metadata extractor (file tags via mutagen)
+6. Metadata import from DJ software (Serato SB, Virtual DJ XML, Rekordbox XML)
+7. Embedding provider abstraction: Local CLAP encoder (default)
+8. Ingestion pipeline: scan → metadata → embed → store
+9. Optional AudD integration for missing metadata
 
 ### Phase 2: Search Backend
 1. Qdrant hybrid search client (pre-filter + vector similarity)
@@ -161,42 +164,43 @@ For a model to be pluggable, it must:
 - Have consistent input/output contracts
 
 ### Per-Model Evaluation
-When a model is added, the app evaluates it on the user's library before allowing it to be used for search. General audio-text benchmarks don't measure DJ-specific retrieval quality, and two models with the same dimensions can have completely different "meaning spaces."
+When a model is added, the app runs background pre-computation but does NOT claim to automatically score retrieval quality. General audio-text benchmarks don't measure DJ-specific retrieval, and two models with the same dimensions can have completely different "meaning spaces."
 
-**What we're testing:** retrieval quality on actual DJ queries, not just vector dimensions. Whether the model's representation of music meaning aligns with how DJs think about tracks.
+**What we're testing:** retrieval quality on actual DJ queries against the user's library, not vector dimensions.
 
-**Evaluation Protocol:**
-1. On model addition, run a standardized test suite against the user's library:
-   - 20-50 vibe queries ("dark", "uplifting", "summer vibes")
-   - 10 artist+BPM+key hybrid queries
-   - 10 lyric semantic queries (if lyrics enabled)
-2. For each query, compute Precision@5 and user rating (1-10) if in test mode
-3. Store model score in registry and display in Settings UI
+**Background Pre-computation:**
+1. Generate a standardized query set from the user's library:
+   - 20-50 vibe queries sampled from common DJ vocabulary
+   - 10 hybrid metadata+vibe queries (artist + BPM + key + vibe)
+   - Queries generated from actual library metadata
+2. Run each query through the new model
+3. Store results for each query (track IDs + ranks)
+4. Do NOT compute a score yet — there is no ground truth
+5. Show in Settings UI: "Model X — evaluating in background"
 
-**Model-Specific Default Settings:**
-Different models may need different search parameters:
-- Similarity threshold: CLAP might need 0.7, MERT might need 0.65
-- Filter weights: Some models respond better to stricter metadata pre-filtering
-- Result count: Some models produce tighter clusters and need more results
+**Scoring (requires user feedback):**
+- Precision@5, Coverage, and other metrics are only computed after the user provides relevance signals
+- Sources of relevance:
+  - **Explicit**: Test mode ratings (1-10 slider after searches)
+  - **Implicit**: Clicks, preview plays, exports/drags to DJ software, query refinements
+- Once ≥20 rated queries accumulate, compute composite score and display: "Rated 7.8/10 on your library"
+- Until then, show "Not enough data — use test mode to rate results"
 
-Store per-model defaults in registry alongside score.
+### Per-Model Collections
+To support model comparison and avoid full re-ingestion on every switch:
+- Each model gets its own Qdrant collection (e.g., `tracks_clap_v1`, `tracks_mert_v1`)
+- SQLite stores model-independent data (track metadata, lyrics, feedback)
+- When user switches models, app simply queries a different Qdrant collection
+- When user compares models side-by-side, both collections are queried in parallel
+- If user deletes a model, its collection is dropped
 
-### Model Leaderboard
-In Settings UI, show ranked list of available models based on:
-1. Evaluation score on user's library (primary)
-2. Model size (smaller = faster on CPU)
-3. Dimensions (affects Qdrant memory usage)
-4. User ratings from test mode
+### Per-Model Default Settings
+Store tuned defaults per model in registry:
+- `similarity_threshold`: CLAP ~0.7, MERT ~0.65
+- `result_limit`: Some models need more results to surface variety
+- `filter_strength`: Weight of metadata pre-filtering vs. vector similarity
 
-Allow user to compare models side-by-side before switching.
-
-### Critical: Model Switching Behavior
-When a user switches models, existing vectors in Qdrant are incompatible because:
-- Different models produce different vector dimensions
-- Even same dimensions have different geometric spaces
-- Old vectors cannot be compared to new query vectors
-
-**Decision: Full Re-embedding.** On model switch, show confirmation modal with estimated time. User confirms, app clears collection and re-ingests. Prevents silent data corruption and keeps implementation simple.
+These are starting points, not optimized values. Real optimization comes from side-by-side comparisons and implicit feedback.
 
 ## Query Parsing: Smart Mode vs Rule-Based
 
@@ -294,14 +298,23 @@ Provide both. Keyword for precision, semantic for theme discovery. Default to ke
 ## Audio Quality Checker
 
 ### Purpose
-Detect potential upsampling and estimate true bitrate/quality. DJs care because upsampled files (e.g., 128kbps MP3 labeled as 320kbps) sound worse on quality sound systems.
+Detect potential upsampling, transcoding artifacts, and low-quality source material. DJs care because upsampled files (e.g., 128kbps MP3 labeled as 320kbps) sound worse on quality sound systems. A trash recording converted to WAV is still a trash recording.
 
 ### Detection Method
-Analyze spectral content and encoding artifacts:
+Analyze spectral content differently based on format:
+
+**Lossy formats (MP3, M4A/AAC):**
 1. **Frequency cutoff analysis**: Genuine 320kbps MP3 has content up to ~20kHz; upsampled 128kbps usually cuts off around 16kHz
 2. **Quantization noise**: Check for abnormal noise floors in high frequencies
 3. **Entropy analysis**: Compare actual spectral entropy to expected entropy for claimed bitrate
 4. **Artifact detection**: Look for pre-echo, ringing, or other encoding artifacts
+
+**Lossless formats (FLAC, WAV, AIFF):**
+1. **Clipping detection**: Sample-level clipping indicates poor source or bad rip
+2. **Spectral flatness**: Extremely flat spectrum can indicate synthesized/generated audio
+3. **Dynamic range**: Abnormally compressed dynamic range may indicate loudness normalization abuse
+4. **Noise floor**: High noise floor relative to signal indicates poor source (tape hiss, vinyl noise, bad recording)
+5. **Stereo correlation**: Abnormally low correlation can indicate phase issues or poor mastering
 
 ### Output
 Store in payload:
@@ -382,8 +395,8 @@ Store in payload:
 - **Decision**: Deduplicate by file path hash (SHA-256 of absolute path + modification time). Skip if already indexed. Allow manual re-ingestion.
 
 ### Track ID Strategy
-- **Track ID**: SHA-256 of (absolute file path + file size + last modified timestamp). Stable across app restarts, changes if file is modified.
-- **File hash**: SHA-256 of full file contents, stored in payload for deduplication and integrity checks.
+- **Track ID**: SHA-256 of full file contents. Stable across moves and renames, changes only when file content changes.
+- **Path + mtime**: Used for change detection, not ID generation. If file hash matches but path changed, update path in place.
 
 ### Cross-Platform Paths in Qdrant
 - **Assumption**: Paths work across OS
@@ -411,27 +424,18 @@ Store in payload:
 │              ┌───────────────┼───────────┐                    │
 │              ▼               ▼           ▼                    │
 │     ┌──────────────┐ ┌──────────┐ ┌──────────┐              │
-│     │ WhisperX     │ │ AudD API │ │ Remote   │              │
-│     │ (opt, local) │ │ (opt)    │ │ Worker   │◄─────────────┤
-│     └──────────────┘ └──────────┘ └──────────┘   HTTP        │
-│                                                   (network)   │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│  Remote Worker (Any Machine / Cloud)                           │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ FastAPI Worker                                        │  │
-│  │  - CLAP encoder (GPU or CPU)                          │  │
-│  │  - Model registry (pluggable embeddings)              │  │
-│  │  - Auth (Bearer token / API key)                      │  │
-│  │  - Batch processing                                   │  │
-│  │  - No Qdrant, no UI, no PyWebView                     │  │
-│  └──────────────────────────────────────────────────────────┘  │
+│     │ WhisperX     │ │ AudD API │ │ SQLite   │              │
+│     │ (opt, local) │ │ (opt)    │ │ (metadata│              │
+│     │              │ │          │ │  + lyrics)│              │
+│     └──────────────┘ └──────────┘ └──────────┘              │
 └─────────────────────────────────────────────────────────────────┘
 ```
-- **Desktop app**: PyWebView UI + FastAPI backend + Qdrant + optional local processes
-- **Remote worker**: Standalone FastAPI service, deployable anywhere. Speaks standard HTTP. No desktop dependencies.
-- **Communication**: Desktop app sends multipart audio to worker over HTTP/HTTPS. Worker returns JSON vectors.
+- **Main thread**: PyWebView UI
+- **Background thread**: FastAPI server (localhost only)
+- **Child process**: Qdrant binary (managed by app, auto-restart on crash)
+- **Local DB**: SQLite file for track metadata, lyrics, timestamps, feedback
+- **Optional process**: WhisperX (GPU)
+- **No remote worker in v1**: Out of scope, see stretch goals
 
 ### Module Structure
 ```
@@ -448,7 +452,7 @@ src/
 │   ├── __init__.py
 │   ├── scanner.py     # File system watcher, recursive scan
 │   ├── metadata.py    # mutagen tags, AudD API client
-│   ├── embeddings.py  # CLAP encoder abstraction (local/remote)
+│   ├── embeddings.py  # Local CLAP encoder (default)
 │   ├── quality.py     # Audio quality checker (upsampling detection)
 │   └── pipeline.py    # Orchestrator: scan → metadata → embed → store
 ├── search/
@@ -472,14 +476,16 @@ src/
 
 ### State Management
 - **Settings**: `settings.json` in platformdirs data directory
-- **Track data**: Qdrant collection with payloads
-- **Ingestion state**: Tracked in Qdrant via `date_added` and file hash; no separate state store
+- **Vector data**: Qdrant collection(s) with payloads (one collection per model)
+- **Metadata DB**: SQLite file for track metadata, lyrics, timestamps, feedback, and import state
+- **Ingestion state**: Tracked via file hash in SQLite; resume on restart
 - **Model cache**: Hugging Face cache in platformdirs models directory
 
 ### Error Handling
-- **Qdrant unavailable**: Retry with backoff; if persistent, show error in UI and disable search
+- **Qdrant unavailable/crashed**: Retry with backoff; if persistent, restart Qdrant binary automatically. If restart fails, show error in UI and disable search.
 - **Corrupt audio file**: Log error, skip file, show in UI skipped-files list
-- **Ingestion interrupted**: Partial results preserved; resume on next scan
+- **Ingestion interrupted**: Partial results preserved; resume on next scan via SQLite state
+- **File modified**: On re-scan, detect changed file hash. Update existing track record rather than creating duplicate.
 
 ### Logging
 - File-based logging to app data directory (`logs/app.log`)
@@ -600,11 +606,12 @@ In Settings, enable "Test Mode" for detailed manual evaluation:
 - Model performance is library-dependent
 
 ### Model Comparison Workflow
-1. User adds Model B while Model A is active
-2. App evaluates Model B in background against test suite
-3. When complete, Settings shows: "Model B rated 8.2/10 vs current Model A at 7.8/10"
-4. User can switch with one click; app warns about re-embedding time
-5. After switching, implicit feedback starts tracking Model B's real-world performance
+1. User enables "Compare Mode" in Settings
+2. Selects two models: current (A) and candidate (B)
+3. For each search, results from both models are queried from their respective Qdrant collections and shown side-by-side
+4. User rates each model's results independently (1-10)
+5. App computes comparative metrics: "Model B wins on 8/12 queries, avg +1.2 rating"
+6. User can switch to winning model with one click (no re-ingestion needed)
 
 ### Per-Model Default Settings
 Store tuned defaults per model in registry:
@@ -612,12 +619,11 @@ Store tuned defaults per model in registry:
 {
   "model_id": "laion/larger_clap",
   "dimensions": 512,
+  "qdrant_collection": "tracks_clap_v1",
   "default_similarity_threshold": 0.7,
   "default_result_limit": 20,
   "default_filter_strength": 0.8,
   "score": 7.8,
-  "precision@5": 0.65,
-  "coverage": 0.9,
   "last_evaluated": "2026-08-30"
 }
 ```
