@@ -367,5 +367,107 @@ Store in payload:
 - **Gap**: Windows paths (C:\Users\...) won't work on macOS/Linux and vice versa
 - **Decision**: Store absolute paths. Qdrant collection is not shared across OS. If user moves library, use "Relocate Library" feature.
 
+## Software Architecture
+
+### Process Model
+```
+┌─────────────────────────────────────────────┐
+│  Main Process                               │
+│  ┌──────────────┐  ┌────────────────────┐  │
+│  │ PyWebView    │  │ FastAPI (thread)   │  │
+│  │ (UI thread)  │  │ localhost:8000     │  │
+│  └──────────────┘  └─────────┬──────────┘  │
+│                              │              │
+│                    ┌─────────┴──────────┐   │
+│                    │  Business Logic    │   │
+│                    │  - Ingestion       │   │
+│                    │  - Search          │   │
+│                    │  - Export          │   │
+│                    └─────────┬──────────┘   │
+│                              │              │
+│              ┌───────────────┼───────────┐  │
+│              ▼               ▼           ▼  │
+│     ┌──────────────┐ ┌──────────┐ ┌──────┐ │
+│     │ Qdrant       │ │ WhisperX │ │ AudD │ │
+│     │ (child proc) │ │ (opt)    │ │ (opt)│ │
+│     └──────────────┘ └──────────┘ └──────┘ │
+└─────────────────────────────────────────────┘
+```
+- **Main thread**: PyWebView UI
+- **Background thread**: FastAPI server (localhost only)
+- **Child process**: Qdrant binary (managed by app)
+- **Optional processes**: WhisperX (GPU), Remote worker (network)
+
+### Module Structure
+```
+src/
+├── __init__.py
+├── config.py          # Settings, paths, environment
+├── main.py            # App entry point, PyWebView + FastAPI lifecycle
+├── models.py          # Pydantic models for API and payloads
+├── db/
+│   ├── __init__.py
+│   ├── qdrant.py      # Qdrant client, collection management
+│   └── schema.py      # Payload definitions, indexes
+├── ingestion/
+│   ├── __init__.py
+│   ├── scanner.py     # File system watcher, recursive scan
+│   ├── metadata.py    # mutagen tags, AudD API client
+│   ├── embeddings.py  # CLAP encoder abstraction (local/remote)
+│   ├── quality.py     # Audio quality checker (upsampling detection)
+│   └── pipeline.py    # Orchestrator: scan → metadata → embed → store
+├── search/
+│   ├── __init__.py
+│   ├── parser.py      # Rule-based query parser
+│   ├── lyrics.py      # Lyric search (keyword + semantic)
+│   └── hybrid.py      # Qdrant search with metadata filters
+├── export/
+│   ├── __init__.py
+│   ├── rekordbox.py   # XML export
+│   ├── serato.py      # SB export
+│   └── m3u.py         # M3U export
+├── lyrics/
+│   ├── __init__.py
+│   └── transcriber.py # WhisperX wrapper
+└── api/
+    ├── __init__.py
+    ├── routes.py      # FastAPI route definitions
+    └── schemas.py     # Request/response models
+```
+
+### State Management
+- **Settings**: `settings.json` in platformdirs data directory
+- **Track data**: Qdrant collection with payloads
+- **Ingestion state**: Tracked in Qdrant via `date_added` and file hash; no separate state store
+- **Model cache**: Hugging Face cache in platformdirs models directory
+
+### Error Handling
+- **Qdrant unavailable**: Retry with backoff; if persistent, show error in UI and disable search
+- **Remote worker unreachable**: Fall back to local embedding; show warning in ingestion progress
+- **Corrupt audio file**: Log error, skip file, show in UI skipped-files list
+- **Ingestion interrupted**: Partial results preserved; resume on next scan
+
+### Logging
+- File-based logging to app data directory (`logs/app.log`)
+- Log levels: INFO for normal operation, WARNING for skipped files, ERROR for failures
+- No telemetry or external logging
+
+### API Contracts (High-Level)
+- `POST /ingest` - Accept file paths or folder paths; returns job ID
+- `GET /ingest/status/{job_id}` - Progress, status, errors
+- `POST /search` - Query with optional filters; returns ranked results
+- `GET /library` - Paginated track list with optional filters
+- `POST /export` - Export selected tracks to format; returns download URL
+- `GET /settings` - Current settings
+- `POST /settings` - Update settings
+- `POST /worker/embed` - (Worker mode only) Accept audio, return vector
+
+### AI-Generated Music Detection
+Flag tracks that may be AI-generated based on spectral and structural artifacts.
+- Analyze high-frequency rolloff, transient sharpness, spectral entropy consistency, and stereo phase correlation
+- Output: `ai_detection_flag` (`likely_human`, `suspected_ai`, `inconclusive`) + confidence score
+- Caveat: Not 100% reliable; false positives on poorly mastered human music. Flag as "suspected" only.
+- UI: Optional filter to hide/show suspected AI tracks
+
 ## Open Questions
 1. **Test library available?** Needed for early validation.
