@@ -1,28 +1,28 @@
 # DJ Song Semantic Search System - Implementation Plan
 
 ## Scope & Constraints
-- **Single user, local-only**: No auth, no cloud sync, no multi-tenancy
-- **Cross-platform desktop app** via PyWebView + FastAPI backend, packaged with PyInstaller
+- **Single user, local-only per instance**: No auth, no cloud sync, no multi-tenancy
+- **Distributable open-source desktop app**: PyWebView + FastAPI backend, packaged with PyInstaller for Win/Mac/Linux
 - **Offline-first core search**: All search happens locally; no API calls at query time
-- **Local Qdrant**: Embedded or Docker-managed; no cloud Qdrant needed
-- **No LLM dependency for core search**: (Decision pending - see below)
+- **Local Qdrant**: Docker-managed or embedded; no cloud dependency
+- **System-level drag-and-drop**: Drag audio files INTO the app for ingestion; drag search results OUT to DJ software/file manager
+- **Plugin integration**: Future scope; not in initial implementation
 
-## Tech Stack (Revised for Local/Personal Use)
+## Tech Stack
 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | **Language** | Python 3.10+ | Best ecosystem for audio ML |
-| **Desktop Shell** | PyWebView | Native OS window rendering local HTML/JS frontend; FastAPI backend runs on localhost in same process |
-| **Packaging** | PyInstaller | Single executable/bundle for Win/Mac/Linux |
-| **Vector DB** | Qdrant (local/Docker) | Best pre-filtering + hybrid search; can run embedded |
-| **Audio Embedding** | LAION-CLAP (laion/larger_clap) | Joint audio-text space; runs locally, no API cost |
-| **Lyric Embedding** | BGE-M3 or text-embedding-3-small | Fast local text embeddings (if lyrics enabled) |
-| **LLM Parser** | **TBD - see question below** | Optional enhancement |
-| **Audio DSP** | Librosa | BPM, key, duration; offline, no API |
+| **Desktop Shell** | PyWebView | Native OS window; supports OS drag-and-drop API; FastAPI backend on localhost |
+| **Packaging** | PyInstaller | Single executable/bundle for distribution |
+| **Vector DB** | Qdrant (Docker or embedded) | Best pre-filtering + hybrid search |
+| **Audio Embedding** | LAION-CLAP (laion/larger_clap) | Joint audio-text space; runs locally |
+| **Lyric Embedding** | BGE-M3 or text-embedding-3-small | Fast local text embeddings (optional) |
+| **Query Parsing** | **Rule-based first, LLM optional** | See decision below |
+| **Audio DSP** | Librosa | BPM, key, duration; offline |
 | **Metadata APIs** | AudD (optional, ingestion only) | Only for untagged files; ~$0.005/recognition |
-| **API Framework** | FastAPI | Serves both local UI and potential future integrations |
-| **Task Queue** | Not needed | Personal library = synchronous ingestion acceptable |
-| **Lyrics** | WhisperX (optional, local) | GPU-accelerated transcription at ingestion time |
+| **API Framework** | FastAPI | Serves local UI |
+| **Lyrics** | WhisperX (optional, local) | GPU-accelerated transcription at ingestion |
 
 ## Architecture (Revised for Local Use)
 
@@ -78,9 +78,37 @@
 }
 ```
 
+## Key Design Decisions
+
+### 1. Query Parsing: Rule-Based First
+- **Phase 1**: Simple regex/string matching against known library values
+  - Match exact artist names from library
+  - Parse BPM ranges ("around 120", "120-130")
+  - Parse musical keys (Camelot and open notation)
+  - Everything else goes to semantic vector search
+- **Phase 2+**: Optional LLM enhancement via OpenAI API (user-configurable)
+  - More natural language understanding
+  - Requires API key, internet connection
+  - Can be toggled in settings
+
+**Rationale**: Keeps core 100% offline and free. Personal library = known artists = rule-based works well.
+
+### 2. Drag-and-Drop Strategy
+- **Drag IN**: PyWebView OS file-drop → `/ingest` endpoint
+- **Drag OUT**: Hybrid approach
+  - Primary: OS file drag (webkit/webview2 APIs)
+  - Fallback: Export buttons for M3U, Rekordbox XML, Serato SB
+- **Future**: Direct DAW plugin integration (out of scope for v1)
+
+### 3. Local-First Data Strategy
+- Library stored on local filesystem
+- Qdrant data stored locally (Docker volume or embedded)
+- No cloud sync
+- AudD as optional enrichment only for untagged files
+
 ## Implementation Phases
 
-### Phase 1: Project Setup & Ingestion Pipeline
+### Phase 1: Project Setup & Core Ingestion
 1. Initialize Python project with pyproject.toml
 2. Set up local Qdrant (Docker or embedded mode)
 3. Implement audio file scanner + metadata extractor
@@ -90,35 +118,52 @@
 
 ### Phase 2: Search Backend
 1. Build Qdrant hybrid search client (pre-filter + vector)
-2. Implement query parser (TBD: LLM vs rule-based)
+2. Implement query parser (rule-based first, LLM optional)
 3. Add optional lyrics search path
 4. Result ranking + scoring
 
-### Phase 3: Desktop App Shell
+### Phase 3: Desktop App & Drag-and-Drop
 1. FastAPI backend with `/search`, `/ingest`, `/library` endpoints
-2. PyWebView wrapper opening local frontend
-3. Simple HTML/JS UI for search and library browsing
+2. PyWebView wrapper with local HTML/JS frontend
+3. Implement drag-IN for audio files
+4. Implement drag-OUT for results (file drag + playlist export)
+5. Simple UI: search bar, results list, library browser
 
-### Phase 4: Polish
+### Phase 4: Polish & Distribution
 1. WhisperX lyric transcription (optional)
 2. Audio preview playback in UI
-3. Packaging with PyInstaller for distribution
+3. Playlist export formats (M3U, Rekordbox XML, etc.)
+4. Packaging with PyInstaller for distribution
+5. Documentation and installer scripts
 
-## Key Design Decisions
+## Drag-and-Drop Integration
 
-### 1. Local-First Data Strategy
-- **Library stored on local filesystem**: DJ points app at their music folder
-- **Qdrant data stored locally**: Either Docker volume or embedded binary
-- **No cloud sync**: All processing happens on the user's machine
-- **AudD as optional enrichment**: Only for untagged files; one-time cost per track
+### Drag In (Ingestion)
+- PyWebView exposes the OS file-drop event on the window
+- Frontend sends dropped file paths to `/ingest` endpoint
+- Backend scans audio files, extracts metadata, generates embeddings
 
-### 2. Query Parsing Strategy
-**Critical decision pending - see question below.**
+### Drag Out (Export to DJ Tools)
+This is the critical UX feature. Options:
 
-### 3. Cost Control
-- Zero recurring API costs for core functionality
-- CLAP and WhisperX run locally (no inference API)
-- Optional AudD calls only during ingestion of untagged files
+**Option A: OS File Drag (Recommended)**
+- PyWebView supports custom drag payloads via JavaScript `DataTransfer`
+- When user drags a result, the app creates a temporary file reference or m3u playlist
+- OS sees it as a file drag; drops into Rekordbox, Serato, Finder, Explorer
+- Limitation: PyWebView's cross-platform drag-out support is inconsistent
+
+**Option B: Playlist Export**
+- User clicks "Export to [DJ Software]" button
+- Backend generates format-specific playlist (M3U, XML for Rekordbox, etc.)
+- User imports into their DJ software
+- More reliable, less magical, but less fluid
+
+**Option C: Hybrid**
+- Primary: OS file drag when possible
+- Fallback: Export buttons for specific DJ software formats
+- This covers the "just drag the results out" desire while being practical
+
+**Recommendation: Start with Option C.** Implement basic file drag-out via PyWebView's webkit/webview2 APIs, plus an "Export Playlist" button for reliability.
 
 ## Risks & Mitigations
 
@@ -129,6 +174,8 @@
 | WhisperX GPU requirement | Make optional; gracefully degrade to no-lyrics mode |
 | PyInstaller bundle size | Use UPX compression; document requirements |
 | Qdrant Docker dependency | Provide embedded fallback or SQLite-based vector store |
+| PyWebView drag-out inconsistency | Implement hybrid: file drag + playlist export buttons |
+| Cross-platform file path handling | Normalize paths; store relative paths or absolute with user confirmation |
 
 ## Validation Plan
 1. **Unit tests**: Parser, filter builder, embedding consistency
@@ -138,28 +185,11 @@
 
 ## Open Questions
 
-1. **Should the frontend be web-based or desktop?** Web is more accessible; desktop enables direct DAW integration.
+1. **Which DJ software should we target for playlist export?** Rekordbox, Serato, Traktor, VirtualDJ, or all of the above? This determines the export formats we need to implement.
 2. **Do you have an existing music library to test with?** Needed for early validation.
 3. **GPU availability?** CLAP and WhisperX run much faster on GPU; CPU fallback is possible but slow.
 
-## Remaining Critical Decision
+## Next Steps
 
-**Query Parsing: LLM vs Rule-Based?**
-
-For a local, personal tool, the query parser can be either:
-
-**Option A: Rule-Based (Recommended)**
-- Regex/string matching against known library values (artists, genres, keys in your library)
-- Parse patterns like "artist X", "BPM range", "key"
-- Zero cost, zero latency, works offline
-- Limitation: Less flexible for vague queries ("something dark")
-
-**Option B: LLM-Based (OpenAI API)**
-- GPT-4o-mini structured outputs
-- More natural language understanding
-- Requires API key, internet, adds ~100-300ms latency per search
-- Better for complex/ambiguous queries
-
-**Recommendation: Start with rule-based.** For a personal library, you know your artists and can match against them directly. Add LLM as an optional enhancement later if needed. This keeps the tool fully offline and free.
-
-**Question: Are you comfortable with rule-based parsing for metadata extraction, or do you want the flexibility of an LLM from day one?**
+1. Resolve DJ software targets for export
+2. Begin Phase 1 implementation (project setup + ingestion)
