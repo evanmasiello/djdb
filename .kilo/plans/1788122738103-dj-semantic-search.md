@@ -8,7 +8,8 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 - **Backend**: FastAPI on localhost (same process)
 - **Packaging**: PyInstaller for Win/Mac/Linux
 - **Vector DB**: Qdrant (Docker or embedded)
-- **Audio embeddings**: LAION-CLAP (local, offline)
+- **Audio embeddings**: LAION-CLAP (local default; optional remote API for large libraries)
+- **Remote embedding API**: Optional cloud endpoint to offload CLAP generation for users without GPUs or with large libraries
 - **Lyrics**: WhisperX (optional, local)
 - **Metadata**: File tags + optional AudD API for untagged files
 
@@ -43,7 +44,9 @@ Each track in Qdrant:
 2. Qdrant setup (Docker compose + embedded fallback)
 3. Audio file scanner (recursive folder scan, format validation)
 4. Metadata extractor (file tags via mutagen)
-5. CLAP embedding extraction
+5. Embedding provider abstraction:
+   - Local CLAP encoder (default)
+   - Remote API client (optional, for large libraries / no GPU)
 6. Ingestion pipeline: scan → metadata → embed → store
 7. Optional AudD integration for missing metadata
 
@@ -76,12 +79,40 @@ Each track in Qdrant:
 4. PyInstaller packaging
 5. README and setup docs
 
+## Remote Embedding API (Optional)
+For users with large libraries or no GPU, provide an optional remote embedding service:
+
+### API Contract
+- **Endpoint**: `POST /v1/embed-audio`
+- **Input**: Multipart audio file or URL
+- **Output**: CLAP vector (512-dim float array) + duration
+- **Batching**: Support multiple files per request for throughput
+- **Auth**: API key or bearer token (optional for self-hosted)
+
+### Deployment Options
+1. **Self-hosted**: User runs the same FastAPI app with a GPU on their network
+2. **Managed cloud**: Hosted service (future monetization path for open-source project)
+
+### Client Integration
+- Desktop app detects GPU availability
+- If no GPU / large library: prompt user to configure remote API URL + key
+- Fallback to local CPU if remote unavailable
+- Cache results locally; never re-upload same file
+
+### Privacy Considerations
+- Audio files contain copyrighted material
+- Remote API should be opt-in with clear disclosure
+- Self-hosted option keeps data on user's network
+- No telemetry or logging of audio content by default
+
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
 - **Drag-out**: Hybrid file drag + export buttons
 - **Export formats**: Rekordbox XML, Serato SB, M3U
 - **Metadata**: Offline-first; AudD only for untagged files during ingestion
 - **Open source**: Yes, for trust and community
+- **Embedding**: Local CLAP default; optional remote API for large libraries / no GPU
+- **Remote API**: Self-hosted or managed; opt-in with privacy disclosure
 
 ## Open Questions
 1. **Test library available?** Needed for early validation.
