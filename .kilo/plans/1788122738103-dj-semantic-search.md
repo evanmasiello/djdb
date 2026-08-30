@@ -37,6 +37,32 @@ Each track in Qdrant:
 }
 ```
 
+## What Qdrant Is
+Qdrant is the vector database that powers the semantic search. It stores the numerical "fingerprints" (embeddings) of each track and lets you find similar tracks by meaning, not just keywords. When you search "dark brooding charli xcx", Qdrant finds tracks whose audio vectors are mathematically close to the text vector, optionally filtered by metadata. It runs as a bundled binary inside the app—no Docker, no cloud.
+
+## Search UX
+- **Primary search bar**: Free-text for vibe/semantic queries ("dark brooding", "sunset beach vibes")
+- **Filter chips/dropdowns**: Separate deterministic fields:
+  - Artist (dropdown populated from library)
+  - BPM range (slider or min/max inputs)
+  - Musical key (Camelot or open notation dropdown)
+  - Genre (multi-select from library tags)
+- **Hybrid behavior**: Metadata filters narrow the candidate set; vector search ranks within that set
+
+## Onboarding & Library Management
+- **First-run**: Prompt user to add music folders before searching
+- **Auto-scan**: Background watcher detects new files in indexed folders and ingests them automatically
+- **Relocate Library**: Settings option to bulk-update file paths if music folder moves
+
+## API Keys & External Services
+- **AudD**: API key stored in Settings UI. Only used during ingestion for untagged files.
+- **Remote Worker**: URL + optional API key stored in Settings UI.
+
+## WhisperX & Model Selection
+- **First enable**: Prompt user to download WhisperX model. Show size and estimated time.
+- **Model choice**: Offer smaller/faster models (e.g., `tiny`, `base`) vs larger/more accurate (`medium`, `large`). User picks based on GPU/RAM.
+- **Local LLM for query parsing**: Offer small downloadable models (Phi-3 Mini 3.8B, Llama 3.2 1B/3B) as an optional alternative to rule-based parsing. Default to rule-based for offline reliability.
+
 ## Implementation Phases
 
 ### Phase 1: Project Setup & Ingestion
