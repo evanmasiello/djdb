@@ -30,8 +30,17 @@ Each track in Qdrant:
     "isrc": "...",
     "duration_seconds": 132,
     "file_path": "/path/to/track.mp3",
+    "file_hash": "sha256...",
+    "sample_rate": 44100,
+    "bitrate": 320,
     "lyrics_snippet": "...",
+    "lyrics_full": "...",
+    "lyrics_timestamps": [...],
     "lyric_vector": [...],  // optional
+    "tags": ["warmup", "peak", "vinyl-only"],
+    "rating": 4,
+    "color_label": "green",
+    "comments": "User notes...",
     "date_added": "2026-08-30"
   }
 }
@@ -192,6 +201,35 @@ When a user switches models, existing vectors in Qdrant are incompatible because
 - Toggle to "Smart Mode": collapses filters into one text field
 - Autocomplete dropdowns always available for precision
 
+## Lyric Search Strategy
+
+### Two Search Modes
+1. **Keyword match**: Exact or fuzzy text search within lyrics
+   - "I walk a lonely road" → matches exact phrase
+   - "lonely road" → fuzzy match, returns tracks containing those words
+   - Best for: DJs who remember specific lines
+
+2. **Semantic lyric search**: Embed full lyrics and search by meaning
+   - "songs about waterfalls" → matches songs whose lyrics are about water, nature, flowing, etc.
+   - "songs with sad lyrics" → matches melancholic themes even without the word "sad"
+   - Best for: Theme/emotion-based discovery ("find me something with hopeful lyrics")
+
+### Implementation
+- Store `lyrics_full` (plain text transcript) and `lyrics_timestamps` (word-level timestamps from WhisperX)
+- Generate `lyric_vector` using a text embedding model (BGE-M3 or similar)
+- When user enables lyric search:
+  - If query is short/phrase-like → keyword search first, semantic as fallback
+  - If query is conceptual/abstract → semantic search
+- UI toggle: "Search lyrics" checkbox + mode selector (Keyword / Semantic / Both)
+
+### Use Case for Semantic Lyric Search
+- DJ wants "songs with uplifting/vibe lyrics" for a feel-good set
+- DJ searches "songs about summer love" and gets tracks thematically related even if exact words differ
+- Cross-lingual: if embedding model supports it, "songs about love" matches love songs in Spanish, French, etc.
+
+### Recommendation
+Provide both. Keyword for precision, semantic for theme discovery. Default to keyword for exact phrases, semantic for vague/thematic queries.
+
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
 - **Drag-out**: Hybrid file drag + export buttons
@@ -255,9 +293,8 @@ When a user switches models, existing vectors in Qdrant are incompatible because
 - **Decision**: Deduplicate by file path hash (SHA-256 of absolute path + modification time). Skip if already indexed. Allow manual re-ingestion.
 
 ### Track ID Strategy
-- **Assumption**: UUID is stable across sessions
-- **Gap**: What if file moves or is re-ingested?
-- **Decision**: Track ID = SHA-256 of (absolute file path + file size + last modified timestamp). Stable across app restarts, changes if file is modified.
+- **Track ID**: SHA-256 of (absolute file path + file size + last modified timestamp). Stable across app restarts, changes if file is modified.
+- **File hash**: SHA-256 of full file contents, stored in payload for deduplication and integrity checks.
 
 ### Cross-Platform Paths in Qdrant
 - **Assumption**: Paths work across OS
