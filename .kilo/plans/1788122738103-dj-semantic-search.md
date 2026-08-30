@@ -8,7 +8,7 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 - **Backend**: FastAPI on localhost (same process)
 - **Packaging**: PyInstaller for Win/Mac/Linux
 - **Vector DB**: Qdrant (bundled portable binary, no Docker)
-- **Audio embeddings**: LAION-CLAP (local default; optional remote API for large libraries)
+- **Audio embeddings**: LAION-CLAP (local default; optional remote worker for large libraries/no GPU)
 - **Remote embedding API**: Optional cloud endpoint to offload CLAP generation for users without GPUs or with large libraries
 - **Lyrics**: WhisperX (optional, local)
 - **Metadata**: File tags + optional AudD API for untagged files
@@ -119,36 +119,134 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 5. README and setup docs
 
 ## Remote Embedding Worker (Optional)
-For users with large libraries or no GPU, provide an optional remote embedding service. Same codebase, separate process, configured entirely through the app settings UI.
 
-### Worker Mode
-- Same FastAPI repo exposes an additional `/v1/embed-audio` endpoint when run in "worker" mode
-- User launches worker on a GPU machine via simple script (`python -m app worker`)
-- Desktop app Settings UI has a "Remote Embedding" section:
-  - Worker URL input (e.g., `http://192.168.1.50:8000`)
-  - API key input (optional, for auth)
-  - Test connection button
-  - Enable/disable toggle
+For users with large libraries or no GPU, the desktop app can offload CLAP embedding generation to a remote worker. The worker is a separate deployable service that speaks a simple HTTP API. Any cloud backend (AWS Lambda, GCP Cloud Run, Azure Functions, Fly.io, etc.) can host it. The protocol is backend-agnostic: standard REST with multipart uploads and JSON responses.
 
-### API Contract
-- **Endpoint**: `POST /v1/embed-audio`
-- **Input**: Multipart audio file or URL
-- **Output**: CLAP vector (512-dim float array) + duration
-- **Batching**: Support multiple files per request for throughput
-- **Auth**: Bearer token or API key (optional for self-hosted)
+### Why This Exists
+CLAP embedding on CPU is slow (seconds per track). GPU is fast but not everyone has one. A remote worker lets users:
+- Use a GPU server on their local network
+- Rent a GPU instance in the cloud for bulk ingestion
+- Share one worker across multiple desktop app instances
 
-### Client Integration
-- Desktop app checks settings for remote worker URL
-- If configured: sends embedding jobs to worker, falls back to local if unreachable
-- If not configured: uses local CLAP encoder (CPU or GPU)
-- Cache results locally; never re-upload same file
-- Ingestion progress UI shows whether embeddings are local or remote
+### Worker Architecture
+The worker is a standalone FastAPI app (same codebase, different entrypoint). It does not need Qdrant, PyWebView, or any desktop-only dependencies. It only needs:
+- FastAPI + Uvicorn
+- CLAP encoder (local or remote)
+- Standard Python HTTP libraries
 
-### Privacy Considerations
-- Audio files contain copyrighted material
-- Remote worker is opt-in via Settings UI with clear disclosure
-- Self-hosted worker keeps data on user's network
-- No telemetry or logging of audio content by default
+Deployment options:
+- **Local network**: `python -m app worker --host 0.0.0.0 --port 8000` on a GPU machine
+- **Cloud**: Docker container deployed to any container host
+- **Serverless**: Packaged as a Lambda/Cloud Function (note: cold starts may be slow for large batches)
+
+### Worker API Contract
+
+#### Health Check
+```
+GET /health
+Response: { "status": "ok", "model": "laion/larger_clap", "dimensions": 512 }
+```
+
+#### Embed Single Audio File
+```
+POST /v1/embed-audio
+Headers:
+  Authorization: Bearer <optional_api_key>
+  Content-Type: multipart/form-data
+Body:
+  file: <audio file>
+  model: <optional model override>
+Response 200:
+{
+  "vector": [0.12, -0.43, ...],  // 512-dim float array
+  "duration": 132.5,
+  "model": "laion/larger_clap",
+  "sample_rate": 44100
+}
+Response 4xx/5xx:
+{
+  "error": "unsupported_format",
+  "message": "File codec not supported"
+}
+```
+
+#### Embed Batch (for throughput)
+```
+POST /v1/embed-audio/batch
+Headers:
+  Authorization: Bearer <optional_api_key>
+  Content-Type: multipart/form-data
+Body:
+  files: [<audio1>, <audio2>, ...]
+  model: <optional model override>
+Response 200:
+{
+  "results": [
+    { "vector": [...], "duration": 132.5, "file_hash": "sha256..." },
+    { "error": "corrupt_file", "message": "..." }
+  ]
+}
+```
+
+### Client Integration (Desktop App)
+
+Settings UI: "Remote Embedding" section:
+- Worker URL input (e.g., `http://192.168.1.50:8000`)
+- API key input (optional, for auth)
+- Test connection button (calls `/health`)
+- Enable/disable toggle
+- Fallback behavior dropdown: "Use local CPU" / "Pause ingestion" / "Skip failed files"
+
+Request flow:
+1. Desktop app has a queue of unembedded tracks
+2. If worker is enabled: send files to worker `/v1/embed-audio/batch`
+3. If worker responds: store vectors in Qdrant, mark track as embedded
+4. If worker fails: fallback per settings (local CPU, pause, or skip)
+5. Never re-upload files that already have a cached vector
+
+### Security & Privacy
+
+- Audio files contain copyrighted material. Remote worker is fully opt-in.
+- Auth: Bearer token or API key. Worker can reject requests without valid credentials.
+- Transport: User is responsible for TLS. For local networks, HTTP is acceptable; for cloud, HTTPS is strongly recommended.
+- Worker logs: By default, worker does not log file contents. It may log metadata (file hash, duration, model used) for debugging.
+- No telemetry: Worker does not phone home to any central service.
+
+### Example Deployments
+
+**Local GPU machine:**
+```bash
+# On GPU machine
+python -m app worker --host 0.0.0.0 --port 8000
+# Desktop app points to http://192.168.1.50:8000
+```
+
+**Docker on local network:**
+```bash
+docker run -p 8000:8000 \
+  -e WORKER_API_KEY=secret \
+  -v /app/models:/app/models \
+  dj-semantic-search/worker:latest
+```
+
+**Cloud Run / Fly.io:**
+```bash
+# Deploy worker as container
+# Set WORKER_API_KEY env var
+# Expose port 8000
+# Desktop app points to https://worker.example.com
+```
+
+### Failure Modes
+
+| Scenario | Behavior |
+|----------|----------|
+| Worker URL unreachable | Fallback to local CPU (if enabled) or pause ingestion with warning |
+| Worker returns 401 | Show auth error in UI; prompt user to check API key |
+| Worker returns 413 (file too large) | Skip file, log error, continue with next |
+| Worker returns 500 | Retry once with backoff; if still failing, fallback or pause |
+| Network timeout | Retry with exponential backoff; max 3 retries per file |
+| Model mismatch | Worker returns supported models in `/health`; client validates before sending |
 
 ## Model Registry (Pluggable Embeddings)
 Allow users to switch audio-text embedding models via Hugging Face Hub or local paths, without rebuilding the app.
@@ -375,32 +473,44 @@ Store in payload:
 
 ### Process Model
 ```
-┌─────────────────────────────────────────────┐
-│  Main Process                               │
-│  ┌──────────────┐  ┌────────────────────┐  │
-│  │ PyWebView    │  │ FastAPI (thread)   │  │
-│  │ (UI thread)  │  │ localhost:8000     │  │
-│  └──────────────┘  └─────────┬──────────┘  │
-│                              │              │
-│                    ┌─────────┴──────────┐   │
-│                    │  Business Logic    │   │
-│                    │  - Ingestion       │   │
-│                    │  - Search          │   │
-│                    │  - Export          │   │
-│                    └─────────┬──────────┘   │
-│                              │              │
-│              ┌───────────────┼───────────┐  │
-│              ▼               ▼           ▼  │
-│     ┌──────────────┐ ┌──────────┐ ┌──────┐ │
-│     │ Qdrant       │ │ WhisperX │ │ AudD │ │
-│     │ (child proc) │ │ (opt)    │ │ (opt)│ │
-│     └──────────────┘ └──────────┘ └──────┘ │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Desktop App (User's Machine)                                  │
+│  ┌──────────────┐  ┌────────────────────┐  ┌───────────────┐  │
+│  │ PyWebView    │  │ FastAPI (thread)   │  │ Qdrant       │  │
+│  │ (UI thread)  │  │ localhost:8000     │  │ (child proc) │  │
+│  └──────────────┘  └─────────┬──────────┘  └───────────────┘  │
+│                              │                                 │
+│                    ┌─────────┴──────────┐                     │
+│                    │  Business Logic    │                     │
+│                    │  - Ingestion       │                     │
+│                    │  - Search          │                     │
+│                    │  - Export          │                     │
+│                    └─────────┬──────────┘                     │
+│                              │                                │
+│              ┌───────────────┼───────────┐                    │
+│              ▼               ▼           ▼                    │
+│     ┌──────────────┐ ┌──────────┐ ┌──────────┐              │
+│     │ WhisperX     │ │ AudD API │ │ Remote   │              │
+│     │ (opt, local) │ │ (opt)    │ │ Worker   │◄─────────────┤
+│     └──────────────┘ └──────────┘ └──────────┘   HTTP        │
+│                                                   (network)   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  Remote Worker (Any Machine / Cloud)                           │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ FastAPI Worker                                        │  │
+│  │  - CLAP encoder (GPU or CPU)                          │  │
+│  │  - Model registry (pluggable embeddings)              │  │
+│  │  - Auth (Bearer token / API key)                      │  │
+│  │  - Batch processing                                   │  │
+│  │  - No Qdrant, no UI, no PyWebView                     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
-- **Main thread**: PyWebView UI
-- **Background thread**: FastAPI server (localhost only)
-- **Child process**: Qdrant binary (managed by app)
-- **Optional processes**: WhisperX (GPU), Remote worker (network)
+- **Desktop app**: PyWebView UI + FastAPI backend + Qdrant + optional local processes
+- **Remote worker**: Standalone FastAPI service, deployable anywhere. Speaks standard HTTP. No desktop dependencies.
+- **Communication**: Desktop app sends multipart audio to worker over HTTP/HTTPS. Worker returns JSON vectors.
 
 ### Module Structure
 ```
