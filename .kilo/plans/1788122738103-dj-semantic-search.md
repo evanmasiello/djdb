@@ -73,47 +73,77 @@ ChromaDB is the vector database that powers the semantic search. It stores the n
   - **Remote LLM API**: External API (OpenAI, Anthropic, etc.). Requires API key in Settings. Query text sent externally; opt-in with disclosure.
   - Default to rule-based for offline reliability.
 
-## Implementation Phases
+## Development Timeline
 
-### Phase 1: Project Setup & Ingestion
-1. `pyproject.toml` with deps: fastapi, chromadb, laion-clap, librosa, pywebview, pyinstaller
-   2. ChromaDB setup (file-based persistence)
-3. SQLite setup (local file for track metadata, lyrics, feedback)
-4. Audio file scanner (recursive folder scan, format validation)
-5. Metadata extractor (file tags via mutagen)
-6. Metadata import from DJ software (Serato SB, Virtual DJ XML, Rekordbox XML)
-7. Embedding provider abstraction: Local CLAP encoder (default)
-8. Ingestion pipeline: scan → metadata → embed → store
-9. Optional AudD integration for missing metadata
+### MVP (8-12 weeks)
+Core functionality that makes the app usable for personal DJ library search.
 
-### Phase 2: Search Backend
-1. ChromaDB search client (vector similarity)
-2. Rule-based query parser:
-   - Match known artists from library
-   - Parse BPM ranges ("around 120", "120-130")
-   - Parse keys (Camelot: 1A-12A/1B-12B, open: C minor, F major)
-   - Remaining text → semantic vector query
-3. Result ranking and scoring
-4. Optional lyrics search path
+**Weeks 1-2: Project Setup & Ingestion**
+- `pyproject.toml` with all dependencies
+- ChromaDB + SQLite initialization
+- Audio file scanner (recursive folder scan, format validation)
+- Metadata extractor (file tags via mutagen)
+- Local CLAP encoder integration
+- Ingestion pipeline: scan → metadata → embed → store
+- Basic CLI or simple UI for testing ingestion
 
-### Phase 3: Desktop App
-1. FastAPI endpoints: `/search`, `/ingest`, `/library`, `/export`
-2. PyWebView wrapper
-3. HTML/JS frontend:
-   - Search bar with results list
-   - Library browser
-   - Ingestion progress UI
-4. Drag-IN: file drop → `/ingest`
- 5. Drag-OUT: hybrid approach
-    - OS file drag from results (webkit/webview2)
-    - Fallback: export buttons (M3U, Rekordbox XML, Serato SB)
+**Weeks 3-4: Search Backend**
+- ChromaDB search client (vector similarity)
+- Rule-based query parser (artist, BPM, key, genre)
+- SQLite metadata filtering pipeline
+- Basic ranking and result formatting
+- API endpoints: `/search`, `/library`
 
-### Phase 4: Polish & Distribution
-1. WhisperX lyric transcription (optional, GPU-aware)
-2. Audio preview playback in UI
-3. Export formats: Rekordbox XML, Serato SB, M3U (stream to disk for large exports)
-4. PyInstaller packaging
-5. README and setup docs
+**Weeks 5-6: Desktop App Shell**
+- PyWebView wrapper
+- Basic HTML/JS frontend:
+  - Search bar with results list
+  - Library browser
+  - Drag-IN for audio files
+  - Drag-OUT for results (file drag + M3U export)
+- FastAPI integration with UI
+
+**Weeks 7-8: Polish & Testing**
+- Error handling, logging, crash recovery
+- Empty library onboarding UX
+- File modification detection and re-ingestion
+- PyInstaller packaging for one platform (start with your OS)
+- Manual testing with your library
+
+**MVP Success Criteria:**
+- Can scan a folder of 5k+ tracks, generate CLAP embeddings, and store in ChromaDB
+- Can search by vibe text with metadata filters (artist, BPM, key)
+- Can drag files into app to ingest
+- Can drag results out to DJ software
+- Works offline, no API keys required
+
+### Add-on 1: Export & Integration (2-3 weeks)
+- Rekordbox XML export
+- Serato SB export
+- DJ software metadata import (Rekordbox, Serato, Virtual DJ)
+- Improved export UI with format selection
+
+### Add-on 2: Lyrics & Model Registry (3-4 weeks)
+- WhisperX lyric transcription (optional, GPU-aware)
+- Lyric search: keyword + semantic
+- Model registry UI (add/switch embedding models)
+- Per-model ChromaDB collections
+- Model comparison mode
+
+### Add-on 3: Advanced Features (2-3 weeks)
+- Audio quality checker (upsampling detection)
+- Audio preview playback in UI
+- Explicit test mode for model evaluation
+- Implicit feedback collection
+- PyInstaller packaging for all platforms
+
+### Stretch Goals (post-v1)
+- Managed cloud backend for remote embedding
+- Self-hosted remote worker
+- Auto-scan / file watcher
+- Model fine-tuning from aggregated feedback
+- Smart mode LLM for query parsing
+- AI-generated music detection
 
 ## Metadata Import from DJ Software
 
