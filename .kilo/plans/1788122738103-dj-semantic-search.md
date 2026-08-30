@@ -11,7 +11,7 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 - **Audio embeddings**: LAION-CLAP (local default; optional remote worker for large libraries/no GPU)
 - **Remote embedding API**: Optional cloud endpoint to offload CLAP generation for users without GPUs or with large libraries
 - **Lyrics**: WhisperX (optional, local)
-- **Metadata**: File tags + optional AudD API for untagged files
+- **Metadata**: File tags + optional AudD API for untagged files + import from DJ software (Serato, Virtual DJ, Rekordbox)
 
 ## Data Model
 Each track in Qdrant:
@@ -80,14 +80,15 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 
 ### Phase 1: Project Setup & Ingestion
 1. `pyproject.toml` with deps: fastapi, qdrant-client, laion-clap, librosa, pywebview, pyinstaller
- 2. Qdrant setup (bundled portable binary)
+  2. Qdrant setup (bundled portable binary)
 3. Audio file scanner (recursive folder scan, format validation)
 4. Metadata extractor (file tags via mutagen)
-5. Embedding provider abstraction:
-   - Local CLAP encoder (default)
-   - Remote API client (optional, for large libraries / no GPU)
-6. Ingestion pipeline: scan → metadata → embed → store
-7. Optional AudD integration for missing metadata
+5. Metadata import from DJ software (Serato SB, Virtual DJ XML, Rekordbox XML)
+6. Embedding provider abstraction:
+    - Local CLAP encoder (default)
+    - Remote API client (optional, for large libraries / no GPU)
+7. Ingestion pipeline: scan → metadata → embed → store
+8. Optional AudD integration for missing metadata
 
 ### Phase 2: Search Backend
 1. Qdrant hybrid search client (pre-filter + vector similarity)
@@ -118,135 +119,31 @@ Qdrant is the vector database that powers the semantic search. It stores the num
 4. PyInstaller packaging
 5. README and setup docs
 
-## Remote Embedding Worker (Optional)
+## Metadata Import from DJ Software
 
-For users with large libraries or no GPU, the desktop app can offload CLAP embedding generation to a remote worker. The worker is a separate deployable service that speaks a simple HTTP API. Any cloud backend (AWS Lambda, GCP Cloud Run, Azure Functions, Fly.io, etc.) can host it. The protocol is backend-agnostic: standard REST with multipart uploads and JSON responses.
+Allow users to import existing metadata from their DJ software libraries to bootstrap the app's database.
 
-### Why This Exists
-CLAP embedding on CPU is slow (seconds per track). GPU is fast but not everyone has one. A remote worker lets users:
-- Use a GPU server on their local network
-- Rent a GPU instance in the cloud for bulk ingestion
-- Share one worker across multiple desktop app instances
+### Supported Formats
+- **Rekordbox**: XML export (`export.xml` or `master.db`)
+- **Serato**: SB database file (`_Serato_` folder structure)
+- **Virtual DJ**: XML database file (`database.xml`)
 
-### Worker Architecture
-The worker is a standalone FastAPI app (same codebase, different entrypoint). It does not need Qdrant, PyWebView, or any desktop-only dependencies. It only needs:
-- FastAPI + Uvicorn
-- CLAP encoder (local or remote)
-- Standard Python HTTP libraries
+### Imported Fields
+- Title, artist, album, genre, BPM, key, duration, file path, date added
+- User-defined tags/labels (Serato cue points, VDJ tags, Rekordbox color codes)
+- Play count and history (optional, for library analytics)
 
-Deployment options:
-- **Local network**: `python -m app worker --host 0.0.0.0 --port 8000` on a GPU machine
-- **Cloud**: Docker container deployed to any container host
-- **Serverless**: Packaged as a Lambda/Cloud Function (note: cold starts may be slow for large batches)
+### UI Flow
+1. User clicks "Import Library" in Settings
+2. Select source DJ software and file/folder
+3. App parses file, shows preview of matched tracks
+4. User confirms import; tracks merged with existing library (dedup by file path)
+5. Missing metadata (e.g., key, BPM) can be computed locally during import
 
-### Worker API Contract
-
-#### Health Check
-```
-GET /health
-Response: { "status": "ok", "model": "laion/larger_clap", "dimensions": 512 }
-```
-
-#### Embed Single Audio File
-```
-POST /v1/embed-audio
-Headers:
-  Authorization: Bearer <optional_api_key>
-  Content-Type: multipart/form-data
-Body:
-  file: <audio file>
-  model: <optional model override>
-Response 200:
-{
-  "vector": [0.12, -0.43, ...],  // 512-dim float array
-  "duration": 132.5,
-  "model": "laion/larger_clap",
-  "sample_rate": 44100
-}
-Response 4xx/5xx:
-{
-  "error": "unsupported_format",
-  "message": "File codec not supported"
-}
-```
-
-#### Embed Batch (for throughput)
-```
-POST /v1/embed-audio/batch
-Headers:
-  Authorization: Bearer <optional_api_key>
-  Content-Type: multipart/form-data
-Body:
-  files: [<audio1>, <audio2>, ...]
-  model: <optional model override>
-Response 200:
-{
-  "results": [
-    { "vector": [...], "duration": 132.5, "file_hash": "sha256..." },
-    { "error": "corrupt_file", "message": "..." }
-  ]
-}
-```
-
-### Client Integration (Desktop App)
-
-Settings UI: "Remote Embedding" section:
-- Worker URL input (e.g., `http://192.168.1.50:8000`)
-- API key input (optional, for auth)
-- Test connection button (calls `/health`)
-- Enable/disable toggle
-- Fallback behavior dropdown: "Use local CPU" / "Pause ingestion" / "Skip failed files"
-
-Request flow:
-1. Desktop app has a queue of unembedded tracks
-2. If worker is enabled: send files to worker `/v1/embed-audio/batch`
-3. If worker responds: store vectors in Qdrant, mark track as embedded
-4. If worker fails: fallback per settings (local CPU, pause, or skip)
-5. Never re-upload files that already have a cached vector
-
-### Security & Privacy
-
-- Audio files contain copyrighted material. Remote worker is fully opt-in.
-- Auth: Bearer token or API key. Worker can reject requests without valid credentials.
-- Transport: User is responsible for TLS. For local networks, HTTP is acceptable; for cloud, HTTPS is strongly recommended.
-- Worker logs: By default, worker does not log file contents. It may log metadata (file hash, duration, model used) for debugging.
-- No telemetry: Worker does not phone home to any central service.
-
-### Example Deployments
-
-**Local GPU machine:**
-```bash
-# On GPU machine
-python -m app worker --host 0.0.0.0 --port 8000
-# Desktop app points to http://192.168.1.50:8000
-```
-
-**Docker on local network:**
-```bash
-docker run -p 8000:8000 \
-  -e WORKER_API_KEY=secret \
-  -v /app/models:/app/models \
-  dj-semantic-search/worker:latest
-```
-
-**Cloud Run / Fly.io:**
-```bash
-# Deploy worker as container
-# Set WORKER_API_KEY env var
-# Expose port 8000
-# Desktop app points to https://worker.example.com
-```
-
-### Failure Modes
-
-| Scenario | Behavior |
-|----------|----------|
-| Worker URL unreachable | Fallback to local CPU (if enabled) or pause ingestion with warning |
-| Worker returns 401 | Show auth error in UI; prompt user to check API key |
-| Worker returns 413 (file too large) | Skip file, log error, continue with next |
-| Worker returns 500 | Retry once with backoff; if still failing, fallback or pause |
-| Network timeout | Retry with exponential backoff; max 3 retries per file |
-| Model mismatch | Worker returns supported models in `/health`; client validates before sending |
+### Conflict Resolution
+- If a track already exists in the app (matched by file path), update metadata from import
+- If file path has changed (e.g., after relocate library), match by file hash
+- Preserve app-specific fields (comments, rating, color_label) during merge
 
 ## Model Registry (Pluggable Embeddings)
 Allow users to switch audio-text embedding models via Hugging Face Hub or local paths, without rebuilding the app.
@@ -404,9 +301,10 @@ Store in payload:
 - **Export formats**: Rekordbox XML, Serato SB, M3U
 - **Metadata**: Offline-first; AudD only for untagged files during ingestion
 - **Open source**: Yes, for trust and community
-- **Embedding**: Local CLAP default; optional remote worker for large libraries / no GPU
-- **Remote worker**: Same repo, configured via Settings UI (no CLI flags)
+- **Embedding**: Local CLAP default only for v1
 - **Model switching**: Full re-embedding with explicit user confirmation
+- **Cloud backend**: Not in v1. Stretch goal: managed cloud worker with per-user API keys
+- **DJ software import**: Serato, Virtual DJ, Rekordbox metadata import supported
 
 ## Assumptions & Gaps to Address
 
@@ -557,7 +455,6 @@ src/
 
 ### Error Handling
 - **Qdrant unavailable**: Retry with backoff; if persistent, show error in UI and disable search
-- **Remote worker unreachable**: Fall back to local embedding; show warning in ingestion progress
 - **Corrupt audio file**: Log error, skip file, show in UI skipped-files list
 - **Ingestion interrupted**: Partial results preserved; resume on next scan
 
@@ -572,9 +469,9 @@ src/
 - `POST /search` - Query with optional filters; returns ranked results
 - `GET /library` - Paginated track list with optional filters
 - `POST /export` - Export selected tracks to format; returns download URL
+- `POST /import` - Import metadata from DJ software (Serato, VDJ, Rekordbox)
 - `GET /settings` - Current settings
 - `POST /settings` - Update settings
-- `POST /worker/embed` - (Worker mode only) Accept audio, return vector
 
 ### AI-Generated Music Detection
 Flag tracks that may be AI-generated based on spectral and structural artifacts.
@@ -582,6 +479,25 @@ Flag tracks that may be AI-generated based on spectral and structural artifacts.
 - Output: `ai_detection_flag` (`likely_human`, `suspected_ai`, `inconclusive`) + confidence score
 - Caveat: Not 100% reliable; false positives on poorly mastered human music. Flag as "suspected" only.
 - UI: Optional filter to hide/show suspected AI tracks
+
+## Stretch Goals
+
+### Managed Cloud Backend
+For users who want offloaded embedding without self-hosting infrastructure:
+- You operate a managed worker service (FastAPI app on GPU infrastructure)
+- Users sign up through the app and receive a per-user API key
+- App calls your cloud endpoint for embedding generation
+- You handle deployment, scaling, and billing
+- User experience: toggle "Cloud Mode" in Settings, enter API key, done
+- Requires: cloud hosting, user accounts, billing integration, usage tracking
+- Out of scope for v1; revisit after core app is stable
+
+### Self-Hosted Remote Worker (Out of Scope for v1)
+- Desktop app can offload embeddings to a remote worker
+- Worker is a standalone FastAPI service deployable anywhere (local GPU, cloud, etc.)
+- Backend-agnostic REST API: multipart upload → JSON vector response
+- User provides worker URL + optional API key in Settings
+- Not included in initial release to keep scope manageable
 
 ## Open Questions
 1. **Test library available?** Needed for early validation.
