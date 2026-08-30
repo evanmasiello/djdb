@@ -505,38 +505,91 @@ Flag tracks that may be AI-generated based on spectral and structural artifacts.
 
 ## Testing & Evaluation
 
-### Human Relevance Rating
-Collect explicit feedback on search result quality to fine-tune the system.
+### Automatic Background Evaluation
+When a model is added, evaluate it automatically in the background without blocking the UI. The evaluation runs once and stores results for comparison.
 
-#### Test Mode (Yourself)
-- In Settings, enable "Test Mode"
-- After each search, show a "Rate these results" panel
-- Slider 1-10: "How well do these results match your query?"
-- Optional text field: "What's missing or wrong?"
-- Results stored in `test_feedback.json` in app data directory
+**What we're evaluating:** retrieval quality on DJ-specific queries against the user's actual library. Not vector dimensions, not general audio-text benchmarks.
 
-#### Production Mode (Future Users)
-- Throttled prompts: ask for rating on 1 in 20 searches (not every search)
-- Simple 1-5 star or thumbs up/down to minimize friction
-- Anonymous usage data tied to local library only
+**Evaluation Protocol:**
+1. App generates a standardized test suite from the user's library:
+   - 20-50 vibe queries sampled from common DJ vocabulary
+   - 10 hybrid metadata+vibe queries (artist + BPM + key + vibe)
+   - 10 lyric semantic queries (if lyrics enabled)
+   - Queries are generated from actual library metadata (existing artists, genres, BPMs)
+2. For each query, run search and compute:
+   - **Precision@5**: % of top-5 results that are relevant
+   - **Coverage**: % of queries with ≥1 relevant result
+   - **Implicit relevance signals** (if available):
+     - Click-through rate on results
+     - Whether user played previewed track
+     - Whether user exported/dragged result to DJ software
+3. Store composite score: `{"model_id": "...", "score": 7.8, "precision@5": 0.65, "coverage": 0.9, "num_queries": 40, "last_evaluated": "..."}`
+4. Show in Settings UI: "Rated 7.8/10 on your library (40 queries)"
 
-#### Metrics from Ratings
-- Average rating per query type (vibe, metadata, lyric)
-- Rating distribution over time (improving or degrading?)
-- Problem queries: low average rating → flagged for manual review
-- Model comparison: if testing two embedding models, compare ratings
+### Implicit Feedback Signals
+Collect lightweight interaction data to continuously refine search quality without explicit ratings:
 
-### Automated Retrieval Metrics
-In addition to human ratings, compute standard IR metrics on a held-out test set:
-- Precision@K, Recall@K, MRR, NDCG@K
-- Run in test mode after model/parameter changes
-- Compare against baseline to detect regressions
+**Track per-query:**
+- Query text and parsed filters
+- Results shown (IDs + ranks)
+- User clicked result → implicit relevance
+- User played preview → stronger relevance signal
+- User exported/dragged to DJ software → strongest relevance signal
+- User refined query within 30 seconds → previous results were unhelpful
+- User cleared search without clicking → no relevant results
 
-### Continuous Improvement
-1. Identify low-rated queries from feedback
-2. Analyze root cause: bad embedding? bad filter? bad ranking?
-3. Adjust model, tune parameters, or improve parsing
-4. Re-test with same queries to confirm improvement
+**Do NOT store:**
+- PII or identifiable info
+- Exact timestamps (only relative time)
+- Audio content or full file paths in feedback logs (use track IDs only)
+
+**Use implicit data to:**
+- Boost models that produce more clicks/exports
+- Identify queries with zero engagement → flag for review
+- Adjust ranking weights per model based on actual user behavior
+
+### Explicit Test Mode (For You)
+In Settings, enable "Test Mode" for detailed manual evaluation:
+- After each search, show 1-10 slider: "How well do these results match?"
+- Optional text: "What's missing or wrong?"
+- Stores structured feedback with query + results + rating
+- Use this to compare models side-by-side or tune parameters
+
+**Your test data is valuable for:**
+- Finding bugs in filter logic or ranking
+- Identifying systematic failures (e.g., "CLAP fails at low-BPM jazz")
+- Calibrating implicit feedback weights
+- Building a personal benchmark suite
+
+**Your test data does NOT directly translate to other users** because:
+- Different libraries have different genre/artist distributions
+- "Dark brooding" means something different to a techno DJ vs. a hip-hop DJ
+- Model performance is library-dependent
+
+### Model Comparison Workflow
+1. User adds Model B while Model A is active
+2. App evaluates Model B in background against test suite
+3. When complete, Settings shows: "Model B rated 8.2/10 vs current Model A at 7.8/10"
+4. User can switch with one click; app warns about re-embedding time
+5. After switching, implicit feedback starts tracking Model B's real-world performance
+
+### Per-Model Default Settings
+Store tuned defaults per model in registry:
+```json
+{
+  "model_id": "laion/larger_clap",
+  "dimensions": 512,
+  "default_similarity_threshold": 0.7,
+  "default_result_limit": 20,
+  "default_filter_strength": 0.8,
+  "score": 7.8,
+  "precision@5": 0.65,
+  "coverage": 0.9,
+  "last_evaluated": "2026-08-30"
+}
+```
+
+These defaults are applied automatically when the user selects the model.
 
 ## Stretch Goals
 
