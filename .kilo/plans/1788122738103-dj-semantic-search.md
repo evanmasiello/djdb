@@ -257,7 +257,9 @@ For lyric searches specifically, the router decides keyword vs semantic based on
   - Route based on query characteristics above
   - Keyword search: SQLite FTS5 or simple text search over `lyrics_full`
   - Semantic search: Qdrant cosine similarity on `lyric_vector`
-- UI toggle: "Search lyrics" checkbox + mode selector (Keyword / Semantic / Both)
+- UI toggle: "Search lyrics" checkbox + mode selector (Both / Keyword / Semantic)
+- **Default mode: Both**. Runs keyword and semantic in parallel, merges results.
+- When keyword match is used: highlight matched words/phrases in `lyrics_snippet` with `<mark>` tags for frontend display
 
 ### Use Case for Semantic Lyric Search
 - DJ wants "songs with uplifting/vibe lyrics" for a feel-good set
