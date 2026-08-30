@@ -7,7 +7,7 @@ Build a distributable, open-source desktop app for DJs to search their local mus
 - **Desktop shell**: PyWebView (native window, OS drag-and-drop)
 - **Backend**: FastAPI on localhost (same process)
 - **Packaging**: PyInstaller for Win/Mac/Linux
-- **Vector DB**: Qdrant (Docker or embedded)
+- **Vector DB**: Qdrant (bundled portable binary, no Docker)
 - **Audio embeddings**: LAION-CLAP (local default; optional remote API for large libraries)
 - **Remote embedding API**: Optional cloud endpoint to offload CLAP generation for users without GPUs or with large libraries
 - **Lyrics**: WhisperX (optional, local)
@@ -41,7 +41,7 @@ Each track in Qdrant:
 
 ### Phase 1: Project Setup & Ingestion
 1. `pyproject.toml` with deps: fastapi, qdrant-client, laion-clap, librosa, pywebview, pyinstaller
-2. Qdrant setup (Docker compose + embedded fallback)
+ 2. Qdrant setup (bundled portable binary)
 3. Audio file scanner (recursive folder scan, format validation)
 4. Metadata extractor (file tags via mutagen)
 5. Embedding provider abstraction:
@@ -84,7 +84,7 @@ For users with large libraries or no GPU, provide an optional remote embedding s
 
 ### Worker Mode
 - Same FastAPI repo exposes an additional `/v1/embed-audio` endpoint when run in "worker" mode
-- User launches worker on a GPU machine via simple script (`python -m app worker` or Docker)
+- User launches worker on a GPU machine via simple script (`python -m app worker`)
 - Desktop app Settings UI has a "Remote Embedding" section:
   - Worker URL input (e.g., `http://192.168.1.50:8000`)
   - API key input (optional, for auth)
@@ -168,10 +168,10 @@ C) **Lazy migration**: Re-embed tracks on-demand during search if vector dimensi
 - **Gap**: How is the server started/stopped? Thread? Subprocess?
 - **Decision**: FastAPI runs in a background thread within the PyWebView process; app startup starts the server, shutdown stops it cleanly
 
-### Qdrant Embedded Mode
-- **Assumption**: "Docker or embedded" implies both are equally viable
-- **Gap**: Qdrant's embedded mode is actually a Rust binary that needs to be packaged
-- **Decision**: Default to Docker for dev; for packaged app, use Qdrant's embedded binary or ship a portable Qdrant binary. Provide clear Docker alternative for power users.
+### Qdrant Packaging
+- **Assumption**: Qdrant runs locally without external dependencies
+- **Gap**: Qdrant requires a Rust binary; not a pure Python library
+- **Decision**: Bundle Qdrant's portable binary with the PyInstaller app (~20MB compressed). Ship platform-specific binaries for Win/Mac/Linux. No Docker required. Binary lives in app's data directory and is launched/stopped by the app.
 
 ### Audio Format Support
 - **Assumption**: All audio files are valid and readable
