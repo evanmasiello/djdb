@@ -480,6 +480,41 @@ Flag tracks that may be AI-generated based on spectral and structural artifacts.
 - Caveat: Not 100% reliable; false positives on poorly mastered human music. Flag as "suspected" only.
 - UI: Optional filter to hide/show suspected AI tracks
 
+## Testing & Evaluation
+
+### Human Relevance Rating
+Collect explicit feedback on search result quality to fine-tune the system.
+
+#### Test Mode (Yourself)
+- In Settings, enable "Test Mode"
+- After each search, show a "Rate these results" panel
+- Slider 1-10: "How well do these results match your query?"
+- Optional text field: "What's missing or wrong?"
+- Results stored in `test_feedback.json` in app data directory
+
+#### Production Mode (Future Users)
+- Throttled prompts: ask for rating on 1 in 20 searches (not every search)
+- Simple 1-5 star or thumbs up/down to minimize friction
+- Anonymous usage data tied to local library only
+
+#### Metrics from Ratings
+- Average rating per query type (vibe, metadata, lyric)
+- Rating distribution over time (improving or degrading?)
+- Problem queries: low average rating → flagged for manual review
+- Model comparison: if testing two embedding models, compare ratings
+
+### Automated Retrieval Metrics
+In addition to human ratings, compute standard IR metrics on a held-out test set:
+- Precision@K, Recall@K, MRR, NDCG@K
+- Run in test mode after model/parameter changes
+- Compare against baseline to detect regressions
+
+### Continuous Improvement
+1. Identify low-rated queries from feedback
+2. Analyze root cause: bad embedding? bad filter? bad ranking?
+3. Adjust model, tune parameters, or improve parsing
+4. Re-test with same queries to confirm improvement
+
 ## Stretch Goals
 
 ### Managed Cloud Backend
