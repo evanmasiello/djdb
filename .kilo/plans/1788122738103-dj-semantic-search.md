@@ -1,7 +1,7 @@
 # DJ Semantic Search - Implementation Plan
 
 ## Goal
-Build a distributable, open-source desktop app for DJs to search their local music libraries by vibe, metadata, and lyrics. Local-first, offline-capable core.
+Build a distributable, open-source desktop app for DJs to search their local music libraries by vibe, metadata, and lyrics. Local-first, offline-capable core. Import existing metadata from DJ software, search semantically, and drag results directly into DJ tools with full metadata intact.
 
 ## Architecture
 - **Desktop shell**: PyWebView (native window, OS drag-and-drop)
@@ -56,6 +56,15 @@ ChromaDB is the vector database that powers the semantic search. It stores the n
   - Genre (multi-select from library tags)
 - **Hybrid behavior**: Metadata filters narrow the candidate set; vector search ranks within that set
 
+## Drag-Out with Full Metadata
+When a user drags a track from the app to a DJ software player or crate:
+1. App creates a temporary M3U playlist containing the track's file path and all metadata (BPM, key, genre, tags, comments)
+2. The drag operation carries this playlist file
+3. DJ software imports the playlist and reads the metadata from the audio file's embedded tags (ID3, Vorbis comment, etc.)
+4. If DJ software doesn't support M3U metadata, fallback to writing metadata directly to the audio file's tags before drag
+
+This ensures all metadata travels with the track when moving to external DJ tools.
+
 ## Onboarding & Library Management
 - **First-run / Empty library**: Show prominent prompt: "Drag in audio files or select a folder to get started"
 - **Relocate Library**: Settings option to bulk-update file paths if music folder moves
@@ -83,6 +92,7 @@ Core functionality that makes the app usable for personal DJ library search.
 - ChromaDB + SQLite initialization
 - Audio file scanner (recursive folder scan, format validation)
 - Metadata extractor (file tags via mutagen)
+- DJ software metadata import (Rekordbox, Serato, Virtual DJ) - core MVP feature
 - Local CLAP encoder integration
 - Ingestion pipeline: scan → metadata → embed → store
 - Basic CLI or simple UI for testing ingestion
@@ -94,13 +104,13 @@ Core functionality that makes the app usable for personal DJ library search.
 - Basic ranking and result formatting
 - API endpoints: `/search`, `/library`
 
-**Weeks 5-6: Desktop App Shell**
+**Weeks 5-6: Desktop App**
 - PyWebView wrapper
 - Basic HTML/JS frontend:
   - Search bar with results list
   - Library browser
   - Drag-IN for audio files
-  - Drag-OUT for results (file drag + M3U export)
+  - Drag-OUT for results (carries full track metadata: BPM, key, tags, etc.)
 - FastAPI integration with UI
 
 **Weeks 7-8: Polish & Testing**
@@ -111,17 +121,18 @@ Core functionality that makes the app usable for personal DJ library search.
 - Manual testing with your library
 
 **MVP Success Criteria:**
+- Can import metadata from existing DJ software libraries (Rekordbox, Serato, VDJ)
 - Can scan a folder of 5k+ tracks, generate CLAP embeddings, and store in ChromaDB
 - Can search by vibe text with metadata filters (artist, BPM, key)
 - Can drag files into app to ingest
-- Can drag results out to DJ software
+- Can drag results out to DJ software with full metadata intact
 - Works offline, no API keys required
 
-### Add-on 1: Export & Integration (2-3 weeks)
+### Add-on 1: Enhanced Export Formats (2-3 weeks)
 - Rekordbox XML export
 - Serato SB export
-- DJ software metadata import (Rekordbox, Serato, Virtual DJ)
-- Improved export UI with format selection
+- Virtual DJ database export
+- Format selection UI for users who need explicit file exports
 
 ### Add-on 2: Lyrics & Model Registry (3-4 weeks)
 - WhisperX lyric transcription (optional, GPU-aware)
@@ -356,14 +367,14 @@ Store in payload:
 
 ## Key Decisions
 - **Query parsing**: Rule-based v1, LLM optional v2 (keeps core offline/free)
-- **Drag-out**: Hybrid file drag + export buttons
-- **Export formats**: Rekordbox XML, Serato SB, M3U
+- **Drag-out**: OS file drag carries full track metadata (BPM, key, tags, etc.) via embedded ID3 tags or temporary playlist
+- **Export formats**: M3U as default drag-out format; Rekordbox/Serato exports as stretch goals
+- **Metadata import**: DJ software import is core MVP feature, not add-on
 - **Metadata**: Offline-first; AudD only for untagged files during ingestion
 - **Open source**: Yes, for trust and community
 - **Embedding**: Local CLAP default only for v1
 - **Model switching**: Switch ChromaDB collection; no re-ingestion needed
 - **Cloud backend**: Not in v1. Stretch goal: managed cloud worker with per-user API keys
-- **DJ software import**: Serato, Virtual DJ, Rekordbox metadata import supported
 - **Vector DB**: ChromaDB (pure Python, file-based persistence)
 
 ## Assumptions & Gaps to Address
@@ -487,9 +498,10 @@ src/
 │   └── hybrid.py      # ChromaDB search + SQLite metadata filtering
 ├── export/
 │   ├── __init__.py
-│   ├── rekordbox.py   # XML export
-│   ├── serato.py      # SB export
-│   └── m3u.py         # M3U export
+│   ├── dragout.py       # Drag-out handler that carries full track metadata (core MVP)
+│   ├── rekordbox.py     # XML export (stretch goal)
+│   ├── serato.py        # SB export (stretch goal)
+│   └── m3u.py           # M3U export (stretch goal)
 ├── lyrics/
 │   ├── __init__.py
 │   └── transcriber.py # WhisperX wrapper
