@@ -341,6 +341,8 @@ class IngestionPipeline:
             existing.bpm = imported_track.metadata.bpm or existing.bpm
             existing.key_camelot = imported_track.metadata.key_camelot or existing.key_camelot
             existing.key_open = imported_track.metadata.key_open or existing.key_open
+            existing.bitrate = imported_track.metadata.bitrate or existing.bitrate
+            existing.comments = imported_track.metadata.comments or existing.comments
             existing.date_imported = imported_track.import_date
             existing.import_source = imported_track.source
             stats["duplicates"] += 1
@@ -358,6 +360,8 @@ class IngestionPipeline:
                 key_camelot=imported_track.metadata.key_camelot,
                 key_open=imported_track.metadata.key_open,
                 duration_seconds=imported_track.metadata.duration_seconds,
+                bitrate=imported_track.metadata.bitrate,
+                comments=imported_track.metadata.comments,
                 date_imported=imported_track.import_date,
                 import_source=imported_track.source,
                 import_metadata=str(imported_track.original_data),

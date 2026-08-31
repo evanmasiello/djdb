@@ -32,6 +32,7 @@ class TrackMetadata:
     channels: Optional[int] = None
     codec: Optional[str] = None
     isrc: Optional[str] = None
+    comments: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -245,10 +246,15 @@ class MetadataExtractor:
 
     @staticmethod
     def _parse_int(value: Optional[str]) -> Optional[int]:
-        """Parse integer from string."""
+        """
+        Parse integer from string.
+
+        BPM tags are commonly written as decimals (TBPM="128.00"), so parse as a
+        float first and round rather than rejecting the value.
+        """
         if value is None:
             return None
         try:
-            return int(value)
+            return round(float(value))
         except (ValueError, TypeError):
             return None
