@@ -1,92 +1,82 @@
-# DJ Semantic Search
+# DJ DB - Semantic Search for DJ Music Libraries
 
-A distributable, open-source desktop app for DJs to search their local music libraries by vibe, metadata, and lyrics. Local-first, offline-capable core.
+A distributable, open-source desktop app for DJs to search their local music libraries by vibe, metadata, and lyrics. Local-first, offline-capable core with support for importing metadata from major DJ software (Rekordbox, Serato, Virtual DJ).
 
-## What It Does
+## Features
 
-- **Semantic vibe search**: Type "dark brooding techno" or "sunset festival vibes" and find matching tracks using AI audio embeddings (LAION-CLAP)
-- **Metadata filtering**: Narrow results by artist, BPM, musical key, and genre
-- **Lyric search**: Find tracks by specific lyrics or lyrical themes (powered by WhisperX transcription)
-- **DJ software integration**: Import existing metadata from Rekordbox, Serato, and Virtual DJ. Drag search results directly into your DJ software with full metadata intact
-- **Model registry**: Switch between different audio-text embedding models and compare results side-by-side
-- **Audio quality checker**: Detect upsampling, transcoding artifacts, and low-quality source material
-- **Open source**: Fully local, no cloud required, no telemetry
+### MVP (Core)
+- **Semantic Search**: Search by vibe/mood ("dark brooding", "sunset beach vibes") using LAION-CLAP embeddings
+- **Metadata Filters**: Filter by artist, BPM range, musical key, genre
+- **DJ Software Import**: Bootstrap your library by importing from Rekordbox, Serato, or Virtual DJ
+- **Drag & Drop**: Drag audio files to ingest, drag results to DJ software with full metadata intact
+- **Local-First**: Works entirely offline, no cloud required
+- **Vector DB**: ChromaDB for fast similarity search with SQLite for rich metadata
+
+### Planned Add-ons
+- Lyric transcription and semantic lyric search
+- Multiple embedding model support
+- Audio quality analysis
+- Lyrics with timestamps (WhisperX)
+- Platform-specific packaging
+
+## Installation
+
+### Prerequisites
+- Python 3.9+
+- pip or poetry
+
+### Setup
+
+```bash
+# Clone the repo
+git clone https://github.com/evanmasiello/djdb.git
+cd djdb
+
+# Install dependencies
+pip install -e ".[dev]"
+
+# Create .env file (optional)
+cp .env.example .env
+```
 
 ## Architecture
 
-- **Desktop shell**: PyWebView (native window, OS drag-and-drop)
-- **Backend**: FastAPI on localhost (same process)
-- **Vector DB**: ChromaDB (pure Python, file-based persistence)
-- **Metadata DB**: SQLite (track metadata, lyrics, feedback, complex filtering)
-- **Audio embeddings**: LAION-CLAP (local default)
-- **Lyrics**: WhisperX (optional, local)
+- **Frontend**: HTML/JS in PyWebView (native desktop window)
+- **Backend**: FastAPI on localhost
+- **Vector DB**: ChromaDB (pure Python, local file-based)
+- **Metadata DB**: SQLite (full track metadata, lyrics, quality metrics)
+- **Audio Embeddings**: LAION-CLAP (default), pluggable via Hugging Face Hub
+- **Lyrics**: Optional WhisperX for local transcription
 
-## Getting Started
+## Development
 
-### Prerequisites
-
-- Python 3.10+
-- pip or poetry
-- (Optional) NVIDIA GPU for faster embedding generation and WhisperX transcription
-
-### Installation
-
+### Run Tests
 ```bash
-git clone https://github.com/yourusername/dj-semantic-search.git
-cd dj-semantic-search
-pip install -r requirements.txt
+pytest tests/
 ```
 
-### Running the App
-
+### Lint & Format
 ```bash
-python -m src.main
+black djdb tests
+ruff check djdb tests
 ```
 
-### Packaging for Distribution
-
+### Type Check
 ```bash
-pyinstaller src/main.py --onefile --windowed
+mypy djdb
 ```
-
-## Usage
-
-1. **First run**: Drag audio files into the app, or select a folder to scan
-2. **Import existing library**: Use Settings to import metadata from Rekordbox, Serato, or Virtual DJ
-3. **Search**: Type a vibe description ("dark", "uplifting", "summer vibes") and use filters for artist, BPM, key
-4. **Drag to DJ software**: Drag search results directly into Rekordbox, Serato, Traktor, etc. Full metadata travels with the track
 
 ## Project Structure
 
 ```
-src/
-├── config.py          # Settings, paths, environment
-├── main.py            # App entry point, PyWebView + FastAPI lifecycle
-├── models.py          # Pydantic models for API and payloads
-├── db/
-│   ├── chroma.py      # ChromaDB client, collection management
-│   ├── sqlite.py      # SQLite schema, metadata, lyrics, feedback
-│   └── schema.py      # Data models and validation
-├── ingestion/
-│   ├── scanner.py     # Recursive folder scan, format validation
-│   ├── metadata.py    # mutagen tags, AudD API client, DJ software import
-│   ├── embeddings.py  # Local CLAP encoder (default)
-│   ├── quality.py     # Audio quality checker
-│   └── pipeline.py    # Orchestrator: scan → metadata → embed → store
-├── search/
-│   ├── parser.py      # Rule-based query parser
-│   ├── lyrics.py      # Lyric search (keyword + semantic)
-│   └── hybrid.py      # ChromaDB search + SQLite metadata filtering
-├── export/
-│   ├── dragout.py     # Drag-out handler with full track metadata
-│   ├── rekordbox.py   # Rekordbox XML export
-│   ├── serato.py      # Serato SB export
-│   └── m3u.py         # M3U export
-├── lyrics/
-│   └── transcriber.py # WhisperX wrapper
-└── api/
-    ├── routes.py      # FastAPI route definitions
-    └── schemas.py     # Request/response models
+djdb/
+├── core/           # Configuration, logging, database
+├── ingestion/      # Audio scanning, metadata extraction, embeddings
+├── search/         # Vector & metadata search
+├── api/            # FastAPI routes
+├── ui/             # Desktop UI (HTML/JS)
+├── models/         # Data models & embeddings
+└── tests/          # Test suite
 ```
 
 ## Development Timeline
@@ -125,10 +115,14 @@ See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for detailed phases.
 | Lyrics | WhisperX |
 | Packaging | PyInstaller |
 
-## Contributing
+## Configuration
 
-This is an open-source project. Contributions are welcome. Please open an issue or PR.
+See [.env.example](.env.example) for available settings.
 
 ## License
 
-MIT
+MIT License - see LICENSE file for details
+
+## Contributing
+
+Contributions welcome! Please see CONTRIBUTING.md for guidelines.
