@@ -1,0 +1,101 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "djdb"
+version = "0.1.0"
+description = "Semantic search for DJ music libraries with local-first embeddings and metadata"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "DJ DB Contributors"}
+]
+
+dependencies = [
+    # Desktop & Web
+    "pywebview>=5.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "python-multipart>=0.0.6",
+    
+    # Vector & Metadata Database
+    "chromadb>=0.4.0",
+    "sqlalchemy>=2.0.0",
+    
+    # Audio Processing
+    "librosa>=0.10.0",
+    "mutagen>=1.46.0",
+    "pydantic>=2.0.0",
+    
+    # Embeddings
+    "transformers>=4.35.0",
+    "torch>=2.0.0",
+    "laion-clap>=1.1.0",
+    
+    # Utilities
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "aiofiles>=23.2.0",
+    "python-dotenv>=1.0.0",
+    
+    # Logging & Monitoring
+    "python-json-logger>=2.0.0",
+    
+    # DJ Software Import
+    "xmltodict>=0.13.0",
+    "sqlite-parser>=0.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+lyrics = [
+    "openai-whisper>=20231117",
+]
+
+remote = [
+    "openai>=1.0.0",
+    "anthropic>=0.10.0",
+]
+
+packaging = [
+    "pyinstaller>=6.0.0",
+    "pyinstaller-hooks-contrib>=2023.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/evanmasiello/djdb"
+Repository = "https://github.com/evanmasiello/djdb.git"
+
+[tool.setuptools]
+packages = ["djdb"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
